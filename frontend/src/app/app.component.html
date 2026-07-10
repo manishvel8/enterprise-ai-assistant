@@ -1,0 +1,32 @@
+<!-- app.component.html — Root application shell -->
+
+<!-- Top navigation bar -->
+<nav class="nav-bar">
+  <div class="nav-brand">
+    <span class="nav-logo">&#x26A1;</span>
+    <span class="nav-title">Enterprise AI Assistant</span>
+    <span class="nav-version">{{ version }}</span>
+  </div>
+  <ul class="nav-links">
+    <li>
+      <a routerLink="/chat" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: false }">
+        &#x1F4AC; Chat
+      </a>
+    </li>
+    <li>
+      <a routerLink="/documents" routerLinkActive="active">
+        &#x1F4C4; Documents
+      </a>
+    </li>
+  </ul>
+</nav>
+
+<!-- Page content — router loads ChatPage or DocumentsPage here -->
+<main class="main-content">
+  <router-outlet />
+</main>
+
+<!-- Footer -->
+<footer class="footer">
+  <span>Enterprise AI Chat Assistant &mdash; Built milestone by milestone</span>
+</footer>

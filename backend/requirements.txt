@@ -1,0 +1,67 @@
+# =============================================================================
+# Enterprise AI Chat Assistant — Backend Dependencies
+# Pin versions for reproducible builds.
+# Install: pip install -r requirements.txt
+# =============================================================================
+
+# --- Web Framework ---
+fastapi==0.115.5
+uvicorn[standard]==0.32.1          # ASGI server (includes websockets + httptools)
+python-multipart==0.0.20           # Required for file uploads (UploadFile)
+
+# --- Data Validation ---
+pydantic==2.10.3
+pydantic-settings==2.6.1           # BaseSettings reads from .env automatically
+
+# --- Environment ---
+python-dotenv==1.0.1
+
+# --- HTTP Client (for calling external APIs) ---
+httpx==0.28.1
+
+# --- OpenAI ---
+openai==1.57.4
+
+# --- LangChain + LangGraph (added in Milestone 22) ---
+# langchain==0.3.9
+# langchain-openai==0.2.10
+# langgraph==0.2.56
+
+# --- PostgreSQL (added in Milestone 8) ---
+# sqlalchemy==2.0.36
+# asyncpg==0.30.0                  # Async PostgreSQL driver
+# alembic==1.14.0                  # Database migrations
+
+# --- Redis + Celery (added in Milestone 9) ---
+# redis==5.2.1
+# celery==5.4.0
+
+# --- Qdrant (added in Milestone 14) ---
+# qdrant-client==1.12.1
+
+# --- Neo4j (added in Milestone 17) ---
+# neo4j==5.27.0
+
+# --- Langfuse (added in Milestone 23) ---
+# langfuse==2.57.4
+
+# --- Document Parsers (added in Milestone 10) ---
+# pymupdf==1.25.1                  # PDF parsing
+# python-docx==1.1.2               # DOCX parsing
+# python-pptx==1.0.2               # PPTX parsing
+# openpyxl==3.1.5                  # Excel parsing
+# pandas==2.2.3                    # CSV parsing
+# pytesseract==0.3.13              # OCR for images
+# Pillow==11.0.0                   # Image processing
+# pdfplumber==0.11.4               # Better PDF table extraction
+
+# --- MinIO (added in Milestone 7) ---
+# minio==7.2.11
+
+# --- Rate Limiting ---
+# slowapi==0.1.9
+
+# --- Testing ---
+pytest==8.3.4
+pytest-asyncio==0.24.0
+httpx==0.28.1                      # Also used for TestClient

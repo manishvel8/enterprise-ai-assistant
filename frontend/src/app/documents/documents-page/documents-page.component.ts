@@ -1,0 +1,11 @@
+import { Component } from '@angular/core';
+
+@Component({
+  selector: 'app-documents-page',
+  imports: [],
+  templateUrl: './documents-page.component.html',
+  styleUrl: './documents-page.component.scss'
+})
+export class DocumentsPageComponent {
+
+}
