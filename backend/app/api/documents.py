@@ -17,6 +17,7 @@ import uuid
 import mimetypes
 import logging
 from pathlib import Path
+from typing import Optional
 from fastapi import APIRouter, UploadFile, File, HTTPException, status, BackgroundTasks
 
 from app.models.document import (
@@ -137,11 +138,8 @@ async def upload_document(
     # --- Save to PostgreSQL (Milestone 8) ---
     await _persist_document(document_id, safe_filename, suffix, len(content), storage_path)
 
-    # TODO Milestone 9: Enqueue Celery task
-    # from app.workers.document_worker import process_document
-    # process_document.delay(document_id)
-    # → Update status to PROCESSING
-    # → Worker will update to COMPLETE or FAILED
+    # --- Enqueue Celery processing task (Milestone 9) ---
+    _enqueue_processing(document_id, safe_filename, suffix)
 
     return UploadResponse(
         document_id=document_id,
@@ -275,6 +273,22 @@ async def delete_document(document_id: str):
 
     logger.info(f"Deleted document: {document_id}")
     return {"message": f"Document '{document_id}' deleted successfully."}
+
+
+def _enqueue_processing(document_id: str, file_name: str, file_type: str) -> None:
+    """
+    Enqueue a Celery document processing task.
+
+    Falls back silently if Redis is not available — the document stays
+    in PENDING status and can be retried when the worker starts.
+    """
+    try:
+        from app.workers.document_worker import process_document
+        task = process_document.delay(document_id, file_name, file_type)
+        logger.info(f"Enqueued processing task: {task.id} for document {document_id}")
+    except Exception as e:
+        logger.warning(f"Could not enqueue Celery task (Redis may not be running): {e}")
+        logger.info(f"Document {document_id} will remain PENDING until worker picks it up")
 
 
 async def _persist_document(

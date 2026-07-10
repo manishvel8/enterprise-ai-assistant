@@ -74,6 +74,19 @@ async def readiness():
 
     dependencies["app"] = DependencyStatus(status="up", latency_ms=0.0)
 
+    # Check Redis (Milestone 9+)
+    try:
+        import redis as redis_lib
+        import time
+        r = redis_lib.Redis(host=settings.redis_host, port=settings.redis_port, db=settings.redis_db, socket_timeout=2)
+        t0 = time.time()
+        r.ping()
+        latency = (time.time() - t0) * 1000
+        r.close()
+        dependencies["redis"] = DependencyStatus(status="up", latency_ms=round(latency, 2))
+    except Exception as e:
+        dependencies["redis"] = DependencyStatus(status="down", error=str(e)[:100])
+
     all_up = all(d.status == "up" for d in dependencies.values())
     overall = "healthy" if all_up else "degraded"
 
