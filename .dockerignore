@@ -1,0 +1,14 @@
+# Root .dockerignore — for worker Dockerfile (built from project root context)
+frontend/node_modules
+frontend/dist
+frontend/.angular
+backend/venv
+**/__pycache__
+**/*.pyc
+**/*.log
+.env
+.git
+*.md
+docs/
+k8s/
+scripts/
