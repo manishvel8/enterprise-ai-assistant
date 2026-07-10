@@ -1,19 +1,20 @@
 """
 chat.py — Chat API endpoints.
 
-Milestone 3: Full chat handler with conversation history.
-Milestone 4: OpenAI GPT integration replaces the echo response.
-Milestone 22: Full agentic workflow.
+Milestone 4: Real OpenAI GPT-4o integration with conversation history.
+Milestone 16: RAG-grounded responses with source citations.
+Milestone 22: Full 9-agent agentic workflow.
 
 POST /api/chat                         — Send a message, get a response
 GET  /api/chat/history/{session_id}    — Get conversation history
 DELETE /api/chat/history/{session_id}  — Clear conversation history
+GET  /api/chat/sessions                — List active sessions (debug)
 """
 
 import time
-import uuid
-from fastapi import APIRouter, HTTPException, status
+import logging
 from typing import List, Dict
+from fastapi import APIRouter, HTTPException, status
 
 from app.models.chat import (
     ChatRequest,
@@ -26,42 +27,35 @@ from app.models.chat import (
 from app.core.config import settings
 
 router = APIRouter(prefix="/api/chat", tags=["Chat"])
+logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # In-memory session store — replaced by PostgreSQL in Milestone 8.
-#
-# Structure:
-#   _sessions = {
-#       "session_abc123": [
-#           {"role": "user", "content": "Hello", "timestamp": "2024-01-01T12:00:00"},
-#           {"role": "assistant", "content": "Hi!", "timestamp": "2024-01-01T12:00:01"},
-#       ]
-#   }
 # ─────────────────────────────────────────────────────────────────────────────
 _sessions: Dict[str, List[Dict]] = {}
 
 
-def _get_session_history(session_id: str) -> List[Dict]:
-    """Return the conversation history for a session, creating it if it doesn't exist."""
+def _get_history(session_id: str) -> List[Dict]:
+    """Return conversation history for a session."""
     if session_id not in _sessions:
         _sessions[session_id] = []
     return _sessions[session_id]
 
 
-def _build_context_from_history(history: List[Dict]) -> str:
+def _history_to_messages(history: List[Dict]) -> List[Dict[str, str]]:
     """
-    Build a human-readable conversation context from history.
+    Convert stored history to OpenAI messages format.
 
-    Used in Milestone 3 to give the echo response access to prior messages.
-    In Milestone 4+, this is replaced by OpenAI's messages array format.
+    OpenAI expects: [{"role": "user"|"assistant", "content": "..."}]
+    We use the last 10 exchanges (20 messages) to keep prompt size manageable.
+
+    Why limit history?
+    - Each message in history adds to the prompt token count
+    - More tokens = higher cost + slower response
+    - Very old context is usually irrelevant
     """
-    if not history:
-        return ""
-    lines = []
-    for msg in history[-6:]:    # use last 6 messages for context (3 turns)
-        role_label = "User" if msg["role"] == "user" else "Assistant"
-        lines.append(f"{role_label}: {msg['content']}")
-    return "\n".join(lines)
+    recent = history[-20:]                          # last 10 turns
+    return [{"role": m["role"], "content": m["content"]} for m in recent]
 
 
 @router.post(
@@ -69,44 +63,53 @@ def _build_context_from_history(history: List[Dict]) -> str:
     response_model=ChatResponse,
     summary="Send a chat message",
     description="""
-Send a message and receive an AI response.
+Send a message and receive an AI-generated response.
 
-**Current milestone (M3):** Intelligent echo response with conversation context awareness.
-**Milestone 4:** Real OpenAI GPT-4o response.
-**Milestone 16+:** RAG-grounded response with source citations.
-**Milestone 22+:** Full 9-agent workflow response.
+**Milestone 4 behaviour:** Real GPT-4o responses with conversation history.
+**Milestone 16+:** Adds RAG retrieval and source citations.
+**Milestone 22+:** Full 9-agent agentic workflow.
+
+Requires OPENAI_API_KEY in .env file.
     """,
 )
 async def chat(request: ChatRequest) -> ChatResponse:
     """
     Main chat handler.
 
-    Receives a user message, updates session history, generates a response,
-    saves the response to history, and returns it.
+    Flow (Milestone 4):
+    1. Load session history
+    2. Add user message to history
+    3. Convert history to OpenAI messages format
+    4. Call OpenAI GPT-4o
+    5. Save assistant response to history
+    6. Return ChatResponse with answer + debug info
+
+    Flow (Milestone 22+):
+    Replace step 3-4 with the full agentic workflow graph.
     """
+    from datetime import datetime, timezone
     start_time = time.time()
 
-    # --- Load session history ---
-    history = _get_session_history(request.session_id)
+    history = _get_history(request.session_id)
 
-    # --- Save the user's message to history ---
-    from datetime import datetime, timezone
+    # Save user message to history
     timestamp = datetime.now(timezone.utc).isoformat()
-    history.append({
-        "role": "user",
-        "content": request.message,
-        "timestamp": timestamp,
-    })
+    history.append({"role": "user", "content": request.message, "timestamp": timestamp})
 
-    # --- Generate response ---
-    # Milestone 3: Smart echo that references conversation context.
-    # Milestone 4: Replace this block with OpenAI API call.
-    response_text = _generate_echo_response(request.message, history[:-1])
+    # --- Try OpenAI, fall back to echo if not configured ---
+    openai_available = bool(settings.openai_api_key and settings.openai_api_key != "sk-your-openai-key-here")
 
-    # --- Save assistant response to history ---
+    if openai_available:
+        answer, token_usage, cost_usd = await _call_openai(history)
+    else:
+        answer = _fallback_response(request.message)
+        token_usage = None
+        cost_usd = None
+
+    # Save assistant response to history
     history.append({
         "role": "assistant",
-        "content": response_text,
+        "content": answer,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     })
 
@@ -114,52 +117,96 @@ async def chat(request: ChatRequest) -> ChatResponse:
 
     return ChatResponse(
         session_id=request.session_id,
-        answer=response_text,
+        answer=answer,
         citations=[],
         debug=DebugInfo(
             intent="general_chat",
             retrieved_chunks_count=0,
             similarity_scores=[],
             cypher_results_count=0,
+            token_usage=token_usage,
+            cost_usd=cost_usd,
             latency_ms=round(latency_ms, 2),
         ) if settings.enable_debug_panel else None,
     )
 
 
-def _generate_echo_response(user_message: str, prior_history: List[Dict]) -> str:
+async def _call_openai(history: List[Dict]) -> tuple:
     """
-    Milestone 3 response generator.
+    Call OpenAI and return (answer, token_usage, cost_usd).
 
-    Creates a context-aware echo response that demonstrates:
-    - The message was received
-    - The system knows conversation history length
-    - The next milestone will add real OpenAI integration
-
-    Replace this entire function in Milestone 4.
+    Handles common OpenAI errors and returns a user-friendly message.
     """
-    turn_count = len([h for h in prior_history if h["role"] == "user"])
+    from app.services.openai_service import chat_completion
+    from openai import RateLimitError, APITimeoutError, APIConnectionError, APIStatusError
 
-    if turn_count == 0:
-        context_note = "This is the start of our conversation."
-    elif turn_count == 1:
-        context_note = "This is turn 2 of our conversation."
-    else:
-        context_note = f"We've exchanged {turn_count} messages so far."
+    messages = _history_to_messages(history[:-1])  # exclude the message we just appended (user's turn)
+    # Add the latest user message
+    messages.append({"role": "user", "content": history[-1]["content"]})
 
-    # Check if user is asking for a specific feature that's coming
-    lower_msg = user_message.lower()
-    if any(word in lower_msg for word in ["document", "pdf", "upload", "file"]):
-        feature_note = "\n\nDocument upload and RAG retrieval is coming in Milestone 7-16."
-    elif any(word in lower_msg for word in ["graph", "neo4j", "relationship", "entity"]):
-        feature_note = "\n\nNeo4j GraphRAG integration is coming in Milestone 17-21."
-    elif any(word in lower_msg for word in ["agent", "workflow", "route"]):
-        feature_note = "\n\nThe full 9-agent workflow is coming in Milestone 22."
-    else:
-        feature_note = "\n\nOpenAI GPT-4o integration is coming in Milestone 4."
+    try:
+        result = await chat_completion(messages=messages)
+        return (
+            result["content"],
+            result["usage"],
+            result["cost_usd"],
+        )
+    except RateLimitError:
+        logger.warning("OpenAI rate limit hit")
+        return (
+            "I'm receiving too many requests right now. Please try again in a moment.",
+            None,
+            None,
+        )
+    except APITimeoutError:
+        logger.warning("OpenAI timeout")
+        return (
+            "The AI took too long to respond. Please try again.",
+            None,
+            None,
+        )
+    except APIConnectionError:
+        logger.error("OpenAI connection error")
+        return (
+            "Could not connect to the AI service. Check your internet connection.",
+            None,
+            None,
+        )
+    except APIStatusError as e:
+        logger.error(f"OpenAI API error: {e.status_code} {e.message}")
+        if e.status_code == 401:
+            return (
+                "Invalid OpenAI API key. Set OPENAI_API_KEY in your .env file.",
+                None,
+                None,
+            )
+        return (
+            f"OpenAI API error: {e.message}",
+            None,
+            None,
+        )
+    except ValueError as e:
+        logger.error(f"OpenAI config error: {e}")
+        return (
+            str(e),
+            None,
+            None,
+        )
 
+
+def _fallback_response(message: str) -> str:
+    """
+    Response when OpenAI is not configured.
+    Guides the user to add their API key.
+    """
     return (
-        f"[Milestone 3 Echo] You asked: \"{user_message}\"\n\n"
-        f"{context_note}{feature_note}"
+        f"[Milestone 4 — OpenAI not configured]\n\n"
+        f"You asked: \"{message}\"\n\n"
+        f"To enable real AI responses:\n"
+        f"1. Get an OpenAI API key: https://platform.openai.com/api-keys\n"
+        f"2. Open your .env file\n"
+        f"3. Set: OPENAI_API_KEY=sk-your-key-here\n"
+        f"4. Restart the backend server"
     )
 
 
@@ -169,16 +216,8 @@ def _generate_echo_response(user_message: str, prior_history: List[Dict]) -> str
     summary="Get conversation history",
 )
 async def get_history(session_id: str) -> ChatHistoryResponse:
-    """
-    Returns all messages in a session in chronological order.
-
-    The Angular frontend calls this when switching between sessions
-    to load the previous conversation.
-
-    Milestone 3: In-memory store.
-    Milestone 8+: PostgreSQL.
-    """
-    history = _get_session_history(session_id)
+    """Returns all messages in a session with timestamps."""
+    history = _get_history(session_id)
     return ChatHistoryResponse(
         session_id=session_id,
         messages=[
@@ -198,33 +237,19 @@ async def get_history(session_id: str) -> ChatHistoryResponse:
     summary="Clear conversation history",
 )
 async def clear_history(session_id: str):
-    """
-    Clears all messages for a session.
-
-    Called when the user clicks "New Chat" and the frontend wants to
-    clear the server-side history for the old session.
-    """
+    """Clears all messages for a session."""
     if session_id in _sessions:
         del _sessions[session_id]
     return {"message": f"History for session '{session_id}' cleared."}
 
 
-@router.get(
-    "/sessions",
-    summary="List all active sessions (debug only)",
-)
+@router.get("/sessions", summary="List active sessions (debug)")
 async def list_sessions():
-    """
-    Returns all session IDs currently in memory.
-    Useful for debugging during development.
-    """
+    """Returns all active session IDs and message counts."""
     return {
         "session_count": len(_sessions),
         "sessions": [
-            {
-                "session_id": sid,
-                "message_count": len(msgs),
-            }
+            {"session_id": sid, "message_count": len(msgs)}
             for sid, msgs in _sessions.items()
         ],
     }
