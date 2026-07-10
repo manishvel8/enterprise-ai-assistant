@@ -1,9 +1,205 @@
-<!-- chat-page.component.html — Milestone 2 skeleton -->
-<div class="chat-page">
-  <div class="chat-placeholder">
-    <div class="placeholder-icon">&#x1F4AC;</div>
-    <h2>Chat Page</h2>
-    <p class="text-muted">Milestone 3: Full chat UI with message list, input, and sidebar</p>
-    <div class="milestone-badge">Current: Milestone 2 — Skeleton</div>
-  </div>
+<!-- chat-page.component.html — Full chat UI -->
+
+<div class="chat-layout" [class.sidebar-hidden]="!showSidebar">
+
+  <!-- ═══════════════════════════ SIDEBAR ═══════════════════════════ -->
+  <aside class="sidebar" *ngIf="showSidebar">
+    <div class="sidebar-header">
+      <button class="btn-new-chat" (click)="newChat()">
+        <span>+</span> New Chat
+      </button>
+    </div>
+
+    <div class="session-list">
+      <div class="session-list-label">Recent Conversations</div>
+      <button
+        *ngFor="let session of sessions"
+        class="session-item"
+        [class.active]="session === currentSessionId"
+        (click)="switchSession(session)"
+        [title]="session"
+      >
+        <span class="session-icon">&#x1F4AC;</span>
+        <span class="session-name">{{ sessionLabel(session) }}</span>
+      </button>
+      <div *ngIf="sessions.length === 0" class="session-empty">
+        No conversations yet
+      </div>
+    </div>
+
+    <div class="sidebar-footer">
+      <div class="sidebar-milestone">Milestone 3 · Chat UI</div>
+    </div>
+  </aside>
+
+  <!-- ═══════════════════════════ MAIN CHAT ═══════════════════════════ -->
+  <main class="chat-main">
+
+    <!-- Top bar -->
+    <div class="chat-topbar">
+      <button class="btn-icon" (click)="toggleSidebar()" title="Toggle sidebar">
+        &#x2630;
+      </button>
+      <span class="chat-title">AI Assistant</span>
+      <button class="btn-icon btn-debug" (click)="toggleDebugPanel()" title="Toggle debug panel"
+              [class.active]="showDebugPanel">
+        &#x1F9EA; Debug
+      </button>
+    </div>
+
+    <!-- Message list -->
+    <div class="message-list" #messageListEl>
+
+      <!-- Welcome message when no messages yet -->
+      <div *ngIf="messages.length === 0 && !isLoading" class="welcome-screen">
+        <div class="welcome-icon">&#x26A1;</div>
+        <h2>Enterprise AI Assistant</h2>
+        <p class="welcome-subtitle">
+          Ask questions about your uploaded documents, request summaries,
+          or explore knowledge relationships.
+        </p>
+        <div class="welcome-examples">
+          <div class="example-label">Try asking:</div>
+          <button class="example-chip" (click)="inputText = 'What are the key highlights from the uploaded documents?'; sendMessage()">
+            Key highlights from documents
+          </button>
+          <button class="example-chip" (click)="inputText = 'Summarize the main topics'; sendMessage()">
+            Summarize main topics
+          </button>
+          <button class="example-chip" (click)="inputText = 'What decisions are mentioned?'; sendMessage()">
+            What decisions are mentioned?
+          </button>
+        </div>
+      </div>
+
+      <!-- Messages -->
+      <div *ngFor="let msg of messages" class="message-row" [class.user-row]="msg.role === 'user'" [class.assistant-row]="msg.role === 'assistant'">
+
+        <!-- Avatar -->
+        <div class="message-avatar">
+          <span *ngIf="msg.role === 'user'">&#x1F464;</span>
+          <span *ngIf="msg.role === 'assistant'">&#x26A1;</span>
+        </div>
+
+        <!-- Bubble -->
+        <div class="message-bubble" [class.user-bubble]="msg.role === 'user'" [class.assistant-bubble]="msg.role === 'assistant'" [class.error-bubble]="msg.isError">
+          <div class="message-content">{{ msg.content }}</div>
+
+          <!-- Source citations -->
+          <div *ngIf="msg.citations && msg.citations.length > 0" class="citations">
+            <div class="citations-label">Sources:</div>
+            <div *ngFor="let citation of msg.citations" class="citation-item">
+              <span class="citation-file">{{ citation.file_name }}</span>
+              <span *ngIf="citation.page_number" class="citation-page">p.{{ citation.page_number }}</span>
+              <span *ngIf="citation.section_title" class="citation-section">— {{ citation.section_title }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Loading indicator -->
+      <div *ngIf="isLoading" class="message-row assistant-row">
+        <div class="message-avatar"><span>&#x26A1;</span></div>
+        <div class="message-bubble assistant-bubble loading-bubble">
+          <div class="loading-dots">
+            <span></span><span></span><span></span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Input area -->
+    <div class="input-area">
+      <div class="input-wrapper">
+        <textarea
+          #inputEl
+          class="chat-input"
+          [(ngModel)]="inputText"
+          (keydown)="onKeyDown($event)"
+          (input)="autoGrow($event)"
+          placeholder="Ask a question about your documents... (Enter to send, Shift+Enter for new line)"
+          rows="1"
+          [disabled]="isLoading"
+        ></textarea>
+        <button
+          class="btn-send"
+          (click)="sendMessage()"
+          [disabled]="!inputText.trim() || isLoading"
+          title="Send message"
+        >
+          <span>&#x27A4;</span>
+        </button>
+      </div>
+      <div class="input-hint">
+        <span *ngIf="!isLoading">Enter to send &middot; Shift+Enter for new line</span>
+        <span *ngIf="isLoading" class="hint-loading">Thinking...</span>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ═══════════════════════════ DEBUG PANEL ═══════════════════════════ -->
+  <aside class="debug-panel" *ngIf="showDebugPanel">
+    <div class="debug-header">
+      <span>Debug Panel</span>
+      <button class="btn-icon" (click)="toggleDebugPanel()">&#x2715;</button>
+    </div>
+
+    <ng-container *ngIf="messages.length > 0">
+      <ng-container *ngFor="let msg of messages">
+        <div *ngIf="msg.role === 'assistant' && msg.debug" class="debug-content">
+
+          <div class="debug-section">
+            <div class="debug-label">Intent</div>
+            <div class="debug-value">{{ msg.debug.intent || '—' }}</div>
+          </div>
+
+          <div class="debug-section" *ngIf="msg.debug.rewritten_query">
+            <div class="debug-label">Rewritten Query</div>
+            <div class="debug-value">{{ msg.debug.rewritten_query }}</div>
+          </div>
+
+          <div class="debug-section">
+            <div class="debug-label">Retrieved Chunks</div>
+            <div class="debug-value">{{ msg.debug.retrieved_chunks_count }}</div>
+          </div>
+
+          <div class="debug-section" *ngIf="msg.debug.cypher_query">
+            <div class="debug-label">Cypher Query</div>
+            <pre class="debug-code">{{ msg.debug.cypher_query }}</pre>
+          </div>
+
+          <div class="debug-section" *ngIf="msg.debug.token_usage">
+            <div class="debug-label">Token Usage</div>
+            <div class="debug-value">
+              Prompt: {{ msg.debug.token_usage.prompt_tokens }}<br>
+              Completion: {{ msg.debug.token_usage.completion_tokens }}<br>
+              Total: {{ msg.debug.token_usage.total_tokens }}
+            </div>
+          </div>
+
+          <div class="debug-section" *ngIf="msg.debug.cost_usd">
+            <div class="debug-label">Cost</div>
+            <div class="debug-value">${{ msg.debug.cost_usd?.toFixed(5) }}</div>
+          </div>
+
+          <div class="debug-section" *ngIf="msg.debug.latency_ms">
+            <div class="debug-label">Latency</div>
+            <div class="debug-value">{{ msg.debug.latency_ms?.toFixed(0) }}ms</div>
+          </div>
+
+          <div class="debug-section" *ngIf="msg.debug.langfuse_trace_id">
+            <div class="debug-label">Langfuse Trace</div>
+            <div class="debug-value debug-trace">{{ msg.debug.langfuse_trace_id }}</div>
+          </div>
+        </div>
+      </ng-container>
+    </ng-container>
+
+    <div *ngIf="messages.length === 0" class="debug-empty">
+      Send a message to see debug info
+    </div>
+  </aside>
+
 </div>
