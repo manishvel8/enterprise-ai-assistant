@@ -1,0 +1,118 @@
+# =============================================================================
+# docker-compose.dev.yml — Development override
+# =============================================================================
+#
+# This override starts ONLY the infrastructure services (databases, Redis)
+# without building the application images. Use this when you want to run
+# the FastAPI backend and Angular frontend directly on your host machine
+# (without Docker) for faster development with hot reload.
+#
+# Usage:
+#   docker compose -f docker-compose.dev.yml up
+#
+# Then separately:
+#   cd backend && source venv/bin/activate && uvicorn app.main:app --reload
+#   cd frontend && ng serve
+#
+# This is faster than the full docker-compose.yml because:
+#   - No image builds required
+#   - Native hot reload (file watchers work on host OS)
+#   - No Docker networking overhead for the app
+# =============================================================================
+
+version: '3.9'
+
+volumes:
+  postgres-data-dev:
+    driver: local
+  neo4j-data-dev:
+    driver: local
+  qdrant-data-dev:
+    driver: local
+  minio-data-dev:
+    driver: local
+  redis-data-dev:
+    driver: local
+
+networks:
+  ai-network-dev:
+    driver: bridge
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: dev-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ai_assistant
+      POSTGRES_USER: ai_user
+      POSTGRES_PASSWORD: dev_password
+    volumes:
+      - postgres-data-dev:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - ai-network-dev
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_user -d ai_assistant"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: dev-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    networks:
+      - ai-network-dev
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: dev-neo4j
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: neo4j/dev_password
+      NEO4J_server_memory_pagecache_size: 256M
+      NEO4J_server_memory_heap_initial__size: 256M
+      NEO4J_server_memory_heap_max__size: 512M
+    volumes:
+      - neo4j-data-dev:/data
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    networks:
+      - ai-network-dev
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: dev-qdrant
+    restart: unless-stopped
+    volumes:
+      - qdrant-data-dev:/qdrant/storage
+    ports:
+      - "6333:6333"
+    networks:
+      - ai-network-dev
+
+  minio:
+    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
+    container_name: dev-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio-data-dev:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    networks:
+      - ai-network-dev
