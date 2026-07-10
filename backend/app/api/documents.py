@@ -1,21 +1,23 @@
 """
 documents.py — Document upload and library API endpoints.
 
-Milestone 2: Skeleton only — accepts uploads but doesn't process them.
-Milestone 7: Saves to MinIO object storage.
-Milestone 8: Saves metadata to PostgreSQL.
-Milestone 9: Enqueues Celery processing task.
-Milestone 10+: Celery worker parses, chunks, embeds, and stores.
+Milestone 7: File validation + MinIO storage.
+Milestone 8: PostgreSQL metadata persistence.
+Milestone 9: Celery queue for background processing.
+Milestone 10-12: Full ingestion pipeline in the worker.
 
-POST   /api/documents/upload      — Upload a new document
-GET    /api/documents             — List all documents
-GET    /api/documents/{id}        — Get document status
-DELETE /api/documents/{id}        — Delete a document
+POST   /api/documents/upload       — Upload + store in MinIO
+GET    /api/documents              — List all documents
+GET    /api/documents/{id}         — Get document status
+GET    /api/documents/{id}/url     — Get download URL from MinIO
+DELETE /api/documents/{id}         — Delete document + MinIO file
 """
 
 import uuid
-from fastapi import APIRouter, UploadFile, File, HTTPException, status
+import mimetypes
+import logging
 from pathlib import Path
+from fastapi import APIRouter, UploadFile, File, HTTPException, status, BackgroundTasks
 
 from app.models.document import (
     UploadResponse,
@@ -23,69 +25,69 @@ from app.models.document import (
     DocumentListResponse,
     DocumentStatus,
 )
+from app.services import storage_service
 from app.core.config import settings
 
 router = APIRouter(prefix="/api/documents", tags=["Documents"])
+logger = logging.getLogger(__name__)
 
-# --- In-memory document store (Milestone 2 placeholder) ---
-# This will be replaced by PostgreSQL in Milestone 8.
-_documents: dict = {}
+# ─────────────────────────────────────────────────────────────────────────────
+# In-memory document store — replaced by PostgreSQL in Milestone 8.
+# ─────────────────────────────────────────────────────────────────────────────
+_documents: dict[str, DocumentMetadata] = {}
+_storage_paths: dict[str, str] = {}    # document_id → MinIO path
 
 
 @router.post(
     "/upload",
     response_model=UploadResponse,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Upload a document for processing",
-    description="""
-Upload a document to be processed by the AI pipeline.
-
-Returns immediately with a document_id. Processing happens in the background.
-Poll GET /api/documents/{id} to check status.
-
-**Supported formats:** PDF, DOCX, PPTX, XLSX, CSV, TXT, PNG, JPG, MP3, MP4, WAV
-
-**Milestone 2:** Accepts file, validates, stores metadata in memory only.
-**Milestone 7+:** Saves file to MinIO object storage.
-**Milestone 8+:** Saves metadata to PostgreSQL.
-**Milestone 9+:** Enqueues Celery processing task.
-    """,
+    summary="Upload a document for AI processing",
 )
-async def upload_document(file: UploadFile = File(...)) -> UploadResponse:
+async def upload_document(
+    file: UploadFile = File(...),
+) -> UploadResponse:
     """
-    Accept a document upload.
+    Upload a document to be processed by the AI pipeline.
 
-    Validation:
-    - File extension must be in allowed list
-    - File must not be empty
-    - File size must not exceed max_upload_size_mb
+    Steps (Milestone 7):
+    1. Validate filename and extension
+    2. Read file bytes and check size
+    3. Detect MIME type from content
+    4. Generate unique document_id
+    5. Upload to MinIO object storage
+    6. Store metadata in memory
+    7. Return 202 Accepted with document_id
 
-    After validation (Milestone 2):
-    - Generate a document_id
-    - Store metadata in memory
-    - Return 202 Accepted with document_id
-
-    After Milestone 9:
-    - Also save file to MinIO
-    - Save metadata to PostgreSQL
-    - Enqueue Celery task for background processing
+    Steps added in later milestones:
+    8. (M8) Save metadata to PostgreSQL
+    9. (M9) Enqueue Celery processing task
     """
-    # Validate file extension
     if not file.filename:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No filename provided.",
         )
 
-    suffix = Path(file.filename).suffix.lower().lstrip(".")
+    # Sanitize filename — prevent path traversal attacks
+    safe_filename = Path(file.filename).name
+    if not safe_filename or safe_filename != file.filename.replace("/", "").replace("\\", ""):
+        safe_filename = file.filename.replace("/", "_").replace("\\", "_")
+
+    # Check extension
+    suffix = Path(safe_filename).suffix.lower().lstrip(".")
     if suffix not in settings.allowed_extensions_list:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"File type '{suffix}' is not supported. Allowed: {settings.allowed_extensions}",
+            detail=(
+                f"File type '{suffix}' is not supported. "
+                f"Allowed types: {settings.allowed_extensions}"
+            ),
         )
 
     # Read file content and check size
     content = await file.read()
+
     if len(content) == 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -96,38 +98,61 @@ async def upload_document(file: UploadFile = File(...)) -> UploadResponse:
     if len(content) > max_bytes:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File exceeds maximum size of {settings.max_upload_size_mb}MB.",
+            detail=f"File exceeds maximum size of {settings.max_upload_size_mb}MB. "
+                   f"File is {len(content) / 1024 / 1024:.1f}MB.",
         )
 
-    # Generate a unique document ID
+    # Detect MIME type from content (safer than trusting file extension)
+    content_type = _detect_mime_type(content, safe_filename)
+    logger.info(f"Upload received: {safe_filename} ({len(content)} bytes, {content_type})")
+
+    # Generate unique document ID
     document_id = f"doc_{uuid.uuid4().hex[:12]}"
 
-    # Store metadata in memory (replaced by PostgreSQL in Milestone 8)
-    _documents[document_id] = DocumentMetadata(
+    # Upload to MinIO
+    storage_path = storage_service.upload_file(
         document_id=document_id,
-        file_name=file.filename,
+        file_bytes=content,
+        file_name=safe_filename,
+        content_type=content_type,
+    )
+
+    if storage_path:
+        _storage_paths[document_id] = storage_path
+        logger.info(f"Stored at: {storage_path}")
+    else:
+        logger.warning(f"MinIO storage failed for {document_id}. Proceeding without file storage.")
+
+    # Store metadata in memory
+    metadata = DocumentMetadata(
+        document_id=document_id,
+        file_name=safe_filename,
         file_type=suffix,
         file_size_bytes=len(content),
         status=DocumentStatus.PENDING,
         chunk_count=0,
     )
+    _documents[document_id] = metadata
 
-    # TODO Milestone 7: Save file to MinIO
-    # storage_service.upload(document_id, content, file.filename)
-
-    # TODO Milestone 8: Save metadata to PostgreSQL
-    # await postgres.insert_document(_documents[document_id])
+    # TODO Milestone 8: Save to PostgreSQL
+    # await postgres.insert_document(metadata)
 
     # TODO Milestone 9: Enqueue Celery task
     # from app.workers.document_worker import process_document
-    # process_document.delay(document_id, file.filename, suffix)
+    # process_document.delay(document_id)
+    # → Update status to PROCESSING
+    # → Worker will update to COMPLETE or FAILED
 
     return UploadResponse(
         document_id=document_id,
-        file_name=file.filename,
+        file_name=safe_filename,
         file_type=suffix,
         status=DocumentStatus.PENDING,
-        message="Document accepted. Processing pipeline is not yet connected (Milestone 9).",
+        message=(
+            "Document uploaded and stored. "
+            "Background processing pipeline connects in Milestone 9. "
+            f"document_id: {document_id}"
+        ),
     )
 
 
@@ -138,8 +163,8 @@ async def upload_document(file: UploadFile = File(...)) -> UploadResponse:
 )
 async def list_documents() -> DocumentListResponse:
     """Return all documents with their current processing status."""
-    docs = list(_documents.values())
-    return DocumentListResponse(documents=docs, total=len(docs))
+    docs = sorted(_documents.values(), key=lambda d: d.document_id, reverse=True)
+    return DocumentListResponse(documents=list(docs), total=len(docs))
 
 
 @router.get(
@@ -149,9 +174,8 @@ async def list_documents() -> DocumentListResponse:
 )
 async def get_document(document_id: str) -> DocumentMetadata:
     """
-    Poll this endpoint to check if a document has finished processing.
-
-    Expected status flow: pending → processing → complete (or failed)
+    Poll this endpoint to track document processing progress.
+    Status flow: pending → processing → complete | failed
     """
     doc = _documents.get(document_id)
     if not doc:
@@ -162,21 +186,92 @@ async def get_document(document_id: str) -> DocumentMetadata:
     return doc
 
 
-@router.delete(
-    "/{document_id}",
-    summary="Delete a document",
+@router.get(
+    "/{document_id}/url",
+    summary="Get a pre-signed download URL for the original file",
 )
-async def delete_document(document_id: str):
+async def get_download_url(document_id: str, expires_seconds: int = 3600):
     """
-    Delete a document and all its associated data.
+    Generate a time-limited URL to download the original file directly from MinIO.
 
-    Milestone 2: Removes from in-memory store.
-    Later milestones: Also removes from PostgreSQL, Qdrant, Neo4j, and MinIO.
+    This avoids routing large file downloads through the API server.
     """
     if document_id not in _documents:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Document '{document_id}' not found.",
         )
+
+    storage_path = _storage_paths.get(document_id)
+    if not storage_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Original file not found in storage.",
+        )
+
+    url = storage_service.get_presigned_url(storage_path, expires_seconds)
+    if not url:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="File storage is not available.",
+        )
+
+    return {"download_url": url, "expires_seconds": expires_seconds}
+
+
+@router.delete(
+    "/{document_id}",
+    summary="Delete a document and all its data",
+)
+async def delete_document(document_id: str):
+    """
+    Delete a document and clean up all associated data.
+
+    Milestone 7: Deletes from memory + MinIO.
+    Later milestones: Also deletes from PostgreSQL, Qdrant vectors, Neo4j nodes.
+    """
+    if document_id not in _documents:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document '{document_id}' not found.",
+        )
+
+    # Delete from MinIO
+    storage_path = _storage_paths.pop(document_id, None)
+    if storage_path:
+        storage_service.delete_file(storage_path)
+
+    # Delete from memory
     del _documents[document_id]
-    return {"message": f"Document '{document_id}' deleted."}
+
+    # TODO Milestone 8: Delete from PostgreSQL
+    # TODO Milestone 14: Delete vectors from Qdrant
+    # TODO Milestone 19: Delete nodes from Neo4j
+
+    logger.info(f"Deleted document: {document_id}")
+    return {"message": f"Document '{document_id}' deleted successfully."}
+
+
+def _detect_mime_type(content: bytes, filename: str) -> str:
+    """
+    Detect MIME type from file content and filename.
+
+    We first try to detect from the actual bytes (magic number check),
+    then fall back to filename extension.
+
+    Why not trust the extension alone?
+    A user could rename a .exe file to .pdf and try to upload it.
+    Content-based detection is more reliable.
+    """
+    # Try python-magic (reads magic bytes from file header)
+    try:
+        import magic
+        detected = magic.from_buffer(content[:1024], mime=True)
+        if detected and detected != "application/octet-stream":
+            return detected
+    except (ImportError, Exception):
+        pass
+
+    # Fallback: guess from filename extension
+    mime_type, _ = mimetypes.guess_type(filename)
+    return mime_type or "application/octet-stream"

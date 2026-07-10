@@ -1,9 +1,189 @@
-<!-- documents-page.component.html — Milestone 2 skeleton -->
+<!-- documents-page.component.html — Document upload + library -->
+
 <div class="documents-page">
-  <div class="documents-placeholder">
-    <div class="placeholder-icon">&#x1F4C4;</div>
-    <h2>Documents Page</h2>
-    <p class="text-muted">Milestone 7: Document upload + library with status tracking</p>
-    <div class="milestone-badge">Current: Milestone 2 — Skeleton</div>
+
+  <!-- ═══════════════════════════ PAGE HEADER ═══════════════════════════ -->
+  <div class="page-header">
+    <div class="page-header-content">
+      <h1>Documents</h1>
+      <p class="page-subtitle">Upload documents to build your knowledge base. The AI will index, chunk, and embed them for retrieval.</p>
+    </div>
+    <button class="btn-refresh" (click)="loadDocuments()" title="Refresh document list">
+      &#x21BB; Refresh
+    </button>
   </div>
+
+  <!-- ═══════════════════════════ ERROR MESSAGE ═══════════════════════════ -->
+  <div *ngIf="errorMessage" class="error-banner">
+    &#x26A0; {{ errorMessage }}
+  </div>
+
+  <!-- ═══════════════════════════ UPLOAD ZONE ═══════════════════════════ -->
+  <div
+    class="upload-zone"
+    [class.drag-over]="isDragOver"
+    (drop)="onDrop($event)"
+    (dragover)="onDragOver($event)"
+    (dragleave)="onDragLeave($event)"
+    (click)="openFilePicker()"
+  >
+    <input
+      #fileInput
+      type="file"
+      multiple
+      [accept]="acceptString"
+      (change)="onFileSelected($event)"
+      style="display: none"
+    />
+
+    <div class="upload-zone-content">
+      <div class="upload-icon">&#x2601;&#xFE0F;</div>
+      <div class="upload-title">
+        <span *ngIf="!isDragOver">Drop files here or click to browse</span>
+        <span *ngIf="isDragOver">Drop files here</span>
+      </div>
+      <div class="upload-subtitle">
+        Supports: PDF, DOCX, PPTX, Excel, CSV, TXT, Images, Audio, Video
+      </div>
+      <div class="upload-limit">Maximum file size: 100MB</div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════ UPLOAD QUEUE ═══════════════════════════ -->
+  <div *ngIf="uploadQueue.length > 0" class="upload-queue">
+    <div class="section-title">Uploading</div>
+    <div *ngFor="let item of uploadQueue" class="upload-item">
+      <div class="upload-item-icon">{{ fileTypeIcon(item.file.name.split('.').pop() || '') }}</div>
+      <div class="upload-item-info">
+        <div class="upload-item-name">{{ item.file.name }}</div>
+        <div class="upload-item-size">{{ formatSize(item.file.size) }}</div>
+        <div class="upload-progress-bar" *ngIf="item.status === 'uploading'">
+          <div class="upload-progress-fill" [style.width.%]="item.progress"></div>
+        </div>
+        <div class="upload-item-error" *ngIf="item.status === 'error'">
+          {{ item.error }}
+        </div>
+      </div>
+      <div class="upload-item-status">
+        <span *ngIf="item.status === 'pending'" class="badge badge--warning">Pending</span>
+        <span *ngIf="item.status === 'uploading'" class="badge badge--warning">Uploading {{ item.progress.toFixed(0) }}%</span>
+        <span *ngIf="item.status === 'done'" class="badge badge--success">Uploaded ✓</span>
+        <span *ngIf="item.status === 'error'" class="badge badge--error">Failed</span>
+      </div>
+      <button class="btn-remove" (click)="removeFromQueue(item)" *ngIf="item.status !== 'uploading'">&times;</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════ DOCUMENT LIBRARY ═══════════════════════════ -->
+  <div class="document-library">
+    <div class="section-header">
+      <div class="section-title">Document Library</div>
+      <span class="doc-count">{{ documents.length }} document{{ documents.length !== 1 ? 's' : '' }}</span>
+    </div>
+
+    <!-- Empty state -->
+    <div *ngIf="documents.length === 0" class="library-empty">
+      <div class="empty-icon">&#x1F4C2;</div>
+      <div class="empty-title">No documents yet</div>
+      <div class="empty-subtitle">Upload documents above to start building your knowledge base</div>
+    </div>
+
+    <!-- Document table -->
+    <div *ngIf="documents.length > 0" class="doc-table-wrapper">
+      <table class="doc-table">
+        <thead>
+          <tr>
+            <th>Document</th>
+            <th>Type</th>
+            <th>Size</th>
+            <th>Chunks</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let doc of documents" class="doc-row">
+            <td class="doc-name-cell">
+              <span class="doc-type-icon">{{ fileTypeIcon(doc.file_type) }}</span>
+              <span class="doc-name" [title]="doc.document_id">{{ doc.file_name }}</span>
+            </td>
+            <td>
+              <span class="badge">{{ doc.file_type.toUpperCase() }}</span>
+            </td>
+            <td class="doc-size">{{ formatSize(doc.file_size_bytes) }}</td>
+            <td class="doc-chunks">
+              <span *ngIf="doc.chunk_count > 0">{{ doc.chunk_count }}</span>
+              <span *ngIf="doc.chunk_count === 0" class="text-muted">—</span>
+            </td>
+            <td>
+              <span class="badge" [ngClass]="statusClass(doc.status)">
+                {{ doc.status }}
+              </span>
+              <div *ngIf="doc.error_message" class="doc-error-note">
+                {{ doc.error_message }}
+              </div>
+            </td>
+            <td class="doc-actions">
+              <button class="btn-action btn-delete" (click)="deleteDocument(doc.document_id)" title="Delete document">
+                &#x1F5D1; Delete
+              </button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Processing indicator -->
+    <div *ngIf="hasProcessingDocuments" class="processing-notice">
+      &#x23F3; Some documents are being processed. Status updates automatically every 5 seconds.
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════ FORMAT INFO ═══════════════════════════ -->
+  <div class="format-info">
+    <div class="section-title">Supported Formats</div>
+    <div class="format-grid">
+      <div class="format-item">
+        <span class="format-icon">📄</span>
+        <div>
+          <strong>Documents</strong>
+          <div class="format-ext">PDF · DOCX · PPTX · TXT</div>
+        </div>
+      </div>
+      <div class="format-item">
+        <span class="format-icon">📊</span>
+        <div>
+          <strong>Spreadsheets</strong>
+          <div class="format-ext">XLSX · CSV</div>
+        </div>
+      </div>
+      <div class="format-item">
+        <span class="format-icon">🖼️</span>
+        <div>
+          <strong>Images (OCR)</strong>
+          <div class="format-ext">PNG · JPG · JPEG</div>
+        </div>
+      </div>
+      <div class="format-item">
+        <span class="format-icon">🎵</span>
+        <div>
+          <strong>Audio (Transcription)</strong>
+          <div class="format-ext">MP3 · WAV</div>
+        </div>
+      </div>
+      <div class="format-item">
+        <span class="format-icon">🎥</span>
+        <div>
+          <strong>Video (Audio + Frames)</strong>
+          <div class="format-ext">MP4</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="pipeline-note">
+      <strong>Processing Pipeline (Milestones 10-19):</strong>
+      Parse → Normalize → Chunk → Embed → Store in Qdrant + Neo4j
+    </div>
+  </div>
+
 </div>
