@@ -134,8 +134,8 @@ async def upload_document(
     )
     _documents[document_id] = metadata
 
-    # TODO Milestone 8: Save to PostgreSQL
-    # await postgres.insert_document(metadata)
+    # --- Save to PostgreSQL (Milestone 8) ---
+    await _persist_document(document_id, safe_filename, suffix, len(content), storage_path)
 
     # TODO Milestone 9: Enqueue Celery task
     # from app.workers.document_worker import process_document
@@ -162,9 +162,34 @@ async def upload_document(
     summary="List all uploaded documents",
 )
 async def list_documents() -> DocumentListResponse:
-    """Return all documents with their current processing status."""
-    docs = sorted(_documents.values(), key=lambda d: d.document_id, reverse=True)
-    return DocumentListResponse(documents=list(docs), total=len(docs))
+    """
+    Return all documents with their current processing status.
+    Reads from PostgreSQL if available, falls back to in-memory.
+    """
+    try:
+        from app.db.postgres import get_session_factory, list_all_documents, DocumentStatusEnum
+        session_factory = get_session_factory()
+        async with session_factory() as db:
+            db_docs = await list_all_documents(db)
+            docs = [
+                DocumentMetadata(
+                    document_id=d.document_id,
+                    file_name=d.file_name,
+                    file_type=d.file_type,
+                    file_size_bytes=d.file_size_bytes,
+                    status=DocumentStatus(d.status.value),
+                    chunk_count=d.chunk_count or 0,
+                    error_message=d.error_message,
+                    created_at=d.created_at.isoformat() if d.created_at else None,
+                    updated_at=d.updated_at.isoformat() if d.updated_at else None,
+                )
+                for d in db_docs
+            ]
+            return DocumentListResponse(documents=docs, total=len(docs))
+    except Exception:
+        # Fall back to in-memory store
+        docs = sorted(_documents.values(), key=lambda d: d.document_id, reverse=True)
+        return DocumentListResponse(documents=list(docs), total=len(docs))
 
 
 @router.get(
@@ -250,6 +275,38 @@ async def delete_document(document_id: str):
 
     logger.info(f"Deleted document: {document_id}")
     return {"message": f"Document '{document_id}' deleted successfully."}
+
+
+async def _persist_document(
+    document_id: str,
+    file_name: str,
+    file_type: str,
+    file_size_bytes: int,
+    storage_path: Optional[str],
+) -> None:
+    """
+    Persist document metadata to PostgreSQL if available.
+    Falls back silently to in-memory only if DB is not connected.
+    """
+    try:
+        from app.db.postgres import get_session_factory, DocumentModel, DocumentStatusEnum
+        from sqlalchemy.exc import OperationalError
+        session_factory = get_session_factory()
+        async with session_factory() as db:
+            doc = DocumentModel(
+                document_id=document_id,
+                file_name=file_name,
+                file_type=file_type,
+                file_size_bytes=file_size_bytes,
+                storage_path=storage_path,
+                status=DocumentStatusEnum.PENDING,
+                chunk_count=0,
+            )
+            db.add(doc)
+            await db.commit()
+            logger.info(f"Document {document_id} saved to PostgreSQL")
+    except Exception as e:
+        logger.warning(f"PostgreSQL not available — using in-memory store only: {e}")
 
 
 def _detect_mime_type(content: bytes, filename: str) -> str:

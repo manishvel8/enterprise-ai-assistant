@@ -50,9 +50,20 @@ async def lifespan(app: FastAPI):
     logger.info(f"CORS origins: {settings.cors_origins}")
     logger.info(f"OpenAI model: {settings.openai_chat_model}")
 
-    # TODO Milestone 8: Initialize PostgreSQL
-    # from app.db.postgres import init_db
-    # await init_db()
+    # --- Initialize PostgreSQL ---
+    # Milestone 8: Enable when PostgreSQL is running.
+    # Uses create_all() to create tables if they don't exist.
+    # In production, use Alembic migrations instead.
+    postgres_url = settings.postgres_url
+    if settings.postgres_password and settings.postgres_password != "":
+        try:
+            from app.db.postgres import init_db
+            await init_db()
+            logger.info("PostgreSQL connected and tables verified")
+        except Exception as e:
+            logger.warning(f"PostgreSQL not available (running without DB): {e}")
+    else:
+        logger.warning("POSTGRES_PASSWORD not set — running without PostgreSQL")
 
     # TODO Milestone 9: Initialize Redis
     # from app.services.cache_service import init_redis
@@ -76,10 +87,12 @@ async def lifespan(app: FastAPI):
     # --- SHUTDOWN ---
     logger.info("Shutting down application ...")
 
-    # TODO: Close connections gracefully
-    # await postgres_pool.close()
-    # neo4j_driver.close()
-    # await langfuse.flush()
+    # Close PostgreSQL connections
+    try:
+        from app.db.postgres import close_db
+        await close_db()
+    except Exception as e:
+        logger.warning(f"Error closing DB: {e}")
 
     logger.info("Shutdown complete.")
 
