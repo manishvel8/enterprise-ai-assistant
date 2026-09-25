@@ -2116,3 +2116,18 @@ http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kube
 ```bash
 kubectl apply -f k8s/dashboard/recommended.yaml
 ```
+Updated the **🏛️ Architecture** tab with a corrected K8s diagram plus the local/dev view.
+
+### Mistakes fixed in your draft
+
+| Original | Corrected |
+|----------|-----------|
+| Ingress fans out equally to Frontend / Backend / LangGraph | Frontend serves UI; **SPA calls Backend**. LangGraph is a **separate** route/host |
+| No Celery | **Celery worker** is its own process/pod (PDF pipeline) |
+| MinIO listed with OpenAI as “external” | MinIO is **data plane** (S3-compatible storage). OpenAI/Tavily are external APIs |
+| All DBs shared by both apps | **Neo4j / MinIO / Redis broker** → Backend+Worker; LangGraph → **Qdrant + Postgres** |
+| Tavily for everything | **LangGraph only** |
+| Observability under user Ingress | Prom/Grafana/Langfuse are **ops**, not chat path |
+| Frontend always `:80` | K8s `:80`; local `npm start` **`:4200`**. Postgres host map **`:5433`**, in-cluster **`:5432`** |
+
+Refresh the HTML → **Architecture** tab to see both diagrams and the correction table.

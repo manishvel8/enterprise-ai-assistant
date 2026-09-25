@@ -162,12 +162,81 @@ nano langgraph-agent/.env
 <!-- ══════════ TAB ARCHITECTURE ══════════ -->
 <div class="tab-panel" id="tarch">
 <div class="card">
-  <div class="card-title">🏛️ System Architecture — Big Picture</div>
-  <p style="color:var(--muted);margin-bottom:14px">This system is an <strong>enterprise RAG + agentic AI assistant</strong>: users upload documents, ask questions, and get grounded answers with citations. Production engineering wraps that with auth, tests, CI/CD, monitoring, and deploy strategies.</p>
+  <div class="card-title">🏛️ System Architecture — Big Picture (Corrected)</div>
+  <p style="color:var(--muted);margin-bottom:14px">This system is an <strong>enterprise RAG + agentic AI assistant</strong>: upload documents, ask questions, get grounded answers. Production engineering adds auth, tests, CI/CD, monitoring, and deploy strategies.</p>
+
   <div class="box box-warn" style="margin-bottom:12px">
-    <strong>Important:</strong> This is <em>two product surfaces</em>, not one Angular app talking to everything.
-    Angular → FastAPI only. LangGraph has its own UI/API on :7860. Prometheus/Grafana are <em>ops</em>, not user chat traffic.
+    <strong>Corrections vs the draft diagram:</strong>
+    Angular does <em>not</em> call LangGraph equally — main SPA → FastAPI only.
+    Celery worker + MinIO belong with the backend path. Tavily is LangGraph-only.
+    Observability / CI/CD / Security are side planes (ops), not under Ingress next to user chat.
   </div>
+
+  <h4 style="margin:12px 0 8px">A) Kubernetes / production view (corrected)</h4>
+  <div class="cmd-block nodirpre">
+    <pre style="font-size:11px;line-height:1.5">
+                ┌─── USERS ───────────────────────────────────────────────┐
+                │  Browser                                                │
+                │    ├─ Angular SPA (served by Frontend pod :80)          │
+                │    └─ optional direct LangGraph UI/API (:7860 host)     │
+                └───────────────────────┬─────────────────────────────────┘
+                                        │ HTTPS
+                          ┌─────────────▼─────────────┐
+                          │   Nginx Ingress (K8s)     │
+                          │  api.* → Backend :8000    │
+                          │  lg.*  → LangGraph :7860  │
+                          │  app.* → Frontend :80     │
+                          └─────────────┬─────────────┘
+                 ┌──────────────────────┼──────────────────────┐
+                 ▼                      ▼                      ▼
+        ┌────────────────┐   ┌─────────────────┐   ┌──────────────────┐
+        │ Frontend       │   │ Backend         │   │ LangGraph Agent  │
+        │ Angular :80    │   │ FastAPI :8000   │   │ 7-node graph     │
+        │ (static UI)    │   │ RAG + docs API  │   │ HITL+guardrails  │
+        │ calls Backend  │   │ JWT routes      │   │ memory+MCP opt.  │
+        └────────────────┘   │ /metrics        │   │ /metrics         │
+                             └────────┬────────┘   └────────┬─────────┘
+                                      │                     │
+                         enqueue      │                     │
+                             ┌────────▼────────┐            │
+                             │ Celery WORKER   │            │
+                             │ (separate pod)  │            │
+                             └────────┬────────┘            │
+                                      │                     │
+        ┌─────────────────────────────┼─────────────────────┼────────────┐
+        │  DATA PLANE                 ▼                     ▼            │
+        │  ┌──────────┐  ┌──────┐  ┌──────────┐  ┌───────┐  ┌─────────┐│
+        │  │PostgreSQL│  │Redis │  │  Qdrant  │  │ Neo4j │  │  MinIO  ││
+        │  │:5432     │  │:6379 │  │  :6333   │  │:7687  │  │ :9000   ││
+        │  │meta+auth │  │broker│  │ vectors  │  │graph  │  │ files   ││
+        │  │+conv/ckpt│  │+cache│  │(B+LG)    │  │(B+W)  │  │(B+W)    ││
+        │  └──────────┘  └──────┘  └──────────┘  └───────┘  └─────────┘│
+        └────────────────────────────────────────────────────────────────┘
+                 B = Backend/Worker   LG = LangGraph   W = Worker writes
+
+        ┌─── EXTERNAL APIs ──────────────────────────────────────────────┐
+        │  OpenAI (Backend + Worker + LangGraph)                         │
+        │  Tavily web search (LangGraph only)                            │
+        └────────────────────────────────────────────────────────────────┘
+
+        ┌─── OBSERVABILITY (ops — not Ingress user path) ────────────────┐
+        │  Langfuse :3000 (LLM traces; optional self-host stack)         │
+        │  Prometheus :9090 scrapes /metrics → Grafana :3001             │
+        │  Alertmanager :9093                                            │
+        └────────────────────────────────────────────────────────────────┘
+
+        ┌─── CI/CD ──────────────────────────────────────────────────────┐
+        │  GitHub → Actions ci.yml → GHCR images → cd.yml                │
+        │  → kubectl set image → rollout status → smoke / rollback       │
+        └────────────────────────────────────────────────────────────────┘
+
+        ┌─── SECURITY ───────────────────────────────────────────────────┐
+        │  JWT Auth · NetworkPolicy · Guardrails · Trivy/Bandit/pip-audit│
+        └────────────────────────────────────────────────────────────────┘
+</pre>
+  </div>
+
+  <h4 style="margin:16px 0 8px">B) Local / learning view (what you run day-to-day)</h4>
   <div class="cmd-block nodirpre">
     <pre style="font-size:11.5px;line-height:1.55">
  USER ──► Angular :4200 ──HTTP──► FastAPI :8000
@@ -177,26 +246,33 @@ nano langgraph-agent/.env
               │                   ├──enqueue──► Redis :6379 ◄── Celery WORKER (separate process)
               │                   │
               │                   └──► Postgres :5433 · Qdrant :6333 · Neo4j :7687 · MinIO :9000
-              │                          │           │              │              │
-              │                     metadata/    vectors +      GraphRAG +    PDF files
-              │                     chat/docs    worker writes  entity graph  (API :9000
-              │                                                              console :9001)
               │
- USER ──► LangGraph UI/API :7860 (7-node graph, HITL, guardrails, memory, optional MCP)
+ USER ──► LangGraph UI/API :7860 (7-node, HITL, guardrails, memory, optional MCP)
               │
-              ├──► Qdrant :6333 (RAG read) + Postgres :5433 (conversations / checkpoints)
-              ├──► OpenAI  +  Tavily (web search — LangGraph only)
-              └──SDK──► Langfuse :3000  (optional; own ClickHouse/PG/Redis/MinIO stack)
+              ├──► Qdrant :6333 + Postgres :5433 (conversations / checkpoints)
+              ├──► OpenAI + Tavily (web — LangGraph only)
+              └──SDK──► Langfuse :3000 (optional)
 
- OPS (not Angular path): Prometheus :9090 scrapes :8000/:7860/metrics
-                         → Grafana :3001 · Alertmanager :9093
-
- External LLM: OpenAI (backend + worker + LangGraph)
+ OPS: Prometheus :9090 scrapes :8000/:7860/metrics → Grafana :3001 · Alertmanager :9093
 </pre>
   </div>
+
+  <h4 style="margin:16px 0 8px">What was wrong in the original box diagram</h4>
+  <table>
+    <tr><th>Original claim</th><th>Correction</th></tr>
+    <tr><td>User → Ingress → Frontend + Backend + LangGraph equally</td><td>SPA mainly hits <strong>Backend</strong>. LangGraph is a second surface (own host/path). Frontend only serves static UI.</td></tr>
+    <tr><td>Celery inside Backend box</td><td>Celery is a <strong>separate worker</strong> pod/process (PDF pipeline).</td></tr>
+    <tr><td>MinIO under “External Services” with OpenAI</td><td>MinIO is <strong>object storage in the data plane</strong> (S3-compatible). OpenAI/Tavily are true external APIs.</td></tr>
+    <tr><td>All DBs used by both AI apps</td><td><strong>Neo4j + MinIO + Redis broker</strong> → Backend/Worker. LangGraph → <strong>Qdrant + Postgres</strong> (+ Tavily).</td></tr>
+    <tr><td>Postgres :5432 in local mental model</td><td>Inside K8s/containers: <strong>5432</strong>. On your laptop host: <strong>5433</strong> (<code>docker-compose.dev.yml</code>).</td></tr>
+    <tr><td>Frontend :80 always</td><td>K8s/Docker image: <strong>:80</strong>. Local <code>npm start</code>: <strong>:4200</strong>.</td></tr>
+    <tr><td>Observability under same Ingress as users</td><td>Prom/Grafana/Alertmanager/Langfuse UI are <strong>ops</strong> (scrape + dashboards), not chat traffic.</td></tr>
+    <tr><td>Tavily for whole system</td><td><strong>LangGraph web_searcher only</strong>.</td></tr>
+  </table>
+
   <div class="box box-info" style="margin-top:12px">
-    <strong>Also in repo but not “user path”:</strong> MCP server (optional tools on LangGraph),
-    Helm/K8s + NetworkPolicy, GitHub Actions CI/CD, k6 load tests, Trivy/Bandit security scans.
+    <strong>Also in repo:</strong> MCP server (optional on LangGraph), Helm chart, NetworkPolicy, k6, security workflows —
+    supporting planes around this architecture, not missing “mystery” services.
   </div>
 </div>
 
