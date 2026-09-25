@@ -736,11 +736,11 @@ pytest tests/test_rag_quality.py -v -s
 <div class="tab-panel" id="t3">
 <div class="card">
   <div class="card-title">🐙 GitHub Repository Setup — Complete Guide</div>
-  <div class="box box-info">You already have GitHub (manish1v8) and are creating a repo named "LLM" / "enterprise-ai-assistant". Follow these steps exactly.</div>
+  <div class="box box-ok">Your repo is live: <a href="https://github.com/manishvel8/enterprise-ai-assistant" target="_blank">github.com/manishvel8/enterprise-ai-assistant</a> (account: <code>manishvel8</code>)</div>
 </div>
 
 <div class="card">
-  <div class="card-title">Phase 1 — Create Repository on GitHub.com</div>
+  <div class="card-title">Phase 1 — Create Repository on GitHub.com <span class="tag to">first time only</span></div>
   <div class="step"><div class="step-n">1</div><div class="step-body">
     <h4>Go to <a href="https://github.com/new" target="_blank">github.com/new</a></h4>
     Fill in these fields:
@@ -757,66 +757,155 @@ pytest tests/test_rag_quality.py -v -s
 </div>
 
 <div class="card">
-  <div class="card-title">Phase 2 — Initialize Git &amp; Push Code</div>
+  <div class="card-title">Phase 2 — First Push (already done once) <span class="tag to">first time only</span></div>
   <div class="cmd-block">
     <div class="dir-label">~/…/enterprise-ai-assistant/</div>
-    <pre><span class="com"># Step 1: Create .gitignore (CRITICAL — never push secrets)</span>
-cat &gt; .gitignore &lt;&lt;'EOF'
-# Python
-__pycache__/
-*.pyc
-*.pyo
-venv/
-backend/venv/
-langgraph-agent/venv/
+    <pre><span class="com"># Create .gitignore — NEVER commit .env / venv</span>
+<span class="com"># (skip if already exists)</span>
 
-# Secrets — NEVER commit these
-.env
-*.env.local
-backend/.env
-langgraph-agent/.env
-
-# Node
-frontend/node_modules/
-frontend/dist/
-frontend/.angular/
-
-# Data
-langgraph-agent/data/
-
-# Coverage
-htmlcov/
-.coverage
-coverage.xml
-*.egg-info/
-EOF
-
-<span class="com"># Step 2: Initialize git</span>
 git init
 git add .
+git status | grep ".env" || echo "✅ no .env staged"
 
-<span class="com"># Step 3: Verify .env is NOT staged (must show nothing)</span>
-git status | grep ".env"
-
-<span class="com"># Step 4: First commit</span>
 git commit -m "feat: enterprise AI assistant — production engineering masterplan"
-
-<span class="com"># Step 5: Set main branch</span>
 git branch -M main
 
-<span class="com"># Step 6: Add remote (replace manish1v8 with your username)</span>
-git remote add origin https://github.com/manish1v8/enterprise-ai-assistant.git
+<span class="com"># THIS STEP was missing when we hit: fatal: 'origin' does not appear to be a git repository</span>
+git remote add origin https://github.com/manishvel8/enterprise-ai-assistant.git
 
-<span class="com"># Step 7: Push!</span>
+<span class="com"># Prefer gh auth (see Phase 3) then:</span>
 git push -u origin main</pre>
   </div>
-  <div class="box box-warn">⚠️ If push fails with authentication error, use a Personal Access Token:<br>
-  GitHub → Settings → Developer settings → Personal access tokens → Generate new token (Classic)<br>
-  Scopes: repo, workflow. Use the token as your password when prompted.</div>
 </div>
 
 <div class="card">
-  <div class="card-title">Phase 3 — Add GitHub Secrets for CI/CD</div>
+  <div class="card-title">Phase 3 — Auth Fixes We Used (when push fails)</div>
+  <div class="box box-warn" style="margin-bottom:12px">
+    GitHub <strong>does not accept your account password</strong> for <code>git push</code>.
+    Use <code>gh auth login</code> (recommended) or a Personal Access Token (PAT) as the password.
+  </div>
+
+  <h4 style="margin:10px 0 8px">Error → Fix cheat sheet</h4>
+  <table>
+    <tr><th>Error you saw</th><th>Cause</th><th>Fix</th></tr>
+    <tr>
+      <td><code>fatal: 'origin' does not appear to be a git repository</code></td>
+      <td>Remote not added</td>
+      <td><code>git remote add origin https://github.com/manishvel8/enterprise-ai-assistant.git</code></td>
+    </tr>
+    <tr>
+      <td><code>Password authentication is not supported</code></td>
+      <td>Typed GitHub password instead of token</td>
+      <td>Use <code>gh auth login</code> OR PAT (<code>ghp_...</code>) as password</td>
+    </tr>
+    <tr>
+      <td><code>403 Permission denied</code> / <code>Invalid username or token</code></td>
+      <td>Wrong/revoked token or missing <code>repo</code> scope</td>
+      <td>New classic PAT with <code>repo</code>, or re-run <code>gh auth login</code></td>
+    </tr>
+    <tr>
+      <td><code>SSL connection timeout</code></td>
+      <td>Network / firewall hiccup</td>
+      <td>Retry later: <code>git push -u origin main</code></td>
+    </tr>
+  </table>
+
+  <h4 style="margin:16px 0 8px">Recommended fix — GitHub CLI (what worked for us)</h4>
+  <div class="cmd-block nodirpre">
+    <pre><span class="com"># Install gh (Ubuntu)</span>
+sudo apt update && sudo apt install gh -y
+<span class="com"># (nvidia dpkg warnings during apt are unrelated — gh still installs)</span>
+
+<span class="com"># Browser login — no PAT paste needed</span>
+gh auth login
+<span class="com"># Choose: GitHub.com → HTTPS → Yes → Login with a web browser
+# Copy one-time code → open browser → authorize</span>
+
+<span class="com"># Wire git to use gh credentials</span>
+gh auth setup-git
+
+<span class="com"># Confirm</span>
+gh auth status
+<span class="com"># ✓ Logged in as manishvel8</span>
+
+<span class="com"># Push</span>
+cd ~/Documents/Carrers/AI_Project/enterprise-ai-assistant
+git push -u origin main</pre>
+  </div>
+
+  <h4 style="margin:16px 0 8px">Alternative — Personal Access Token</h4>
+  <div class="cmd-block nodirpre">
+    <pre><span class="com"># 1. Create token: https://github.com/settings/tokens
+#    Classic → enable "repo" → Generate → copy ghp_...
+# 2. NEVER paste the token in chat/screenshots — revoke if leaked</span>
+
+git push -u origin main
+<span class="com"># Username: manishvel8
+# Password: paste the ghp_... token (nothing shows while pasting — OK)</span></pre>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">Phase 4 — Push AGAIN after code changes <span class="tag tg2">use this every day</span></div>
+  <p style="color:var(--muted);margin-bottom:12px">After the first push, you do <strong>not</strong> need <code>git init</code> or <code>git remote add</code> again. Only add / commit / push.</p>
+
+  <div class="cmd-block">
+    <div class="dir-label">~/…/enterprise-ai-assistant/</div>
+    <pre><span class="com"># 1. See what changed</span>
+git status
+git diff
+
+<span class="com"># 2. Stage files (all changes, or pick files)</span>
+git add -A
+<span class="com"># OR: git add path/to/file.py</span>
+
+<span class="com"># 3. Commit with a clear message</span>
+git commit -m "feat: short description of what you changed"
+
+<span class="com"># 4. Push to the same GitHub repo (main branch)</span>
+git push
+
+<span class="com"># Same as: git push origin main
+# After first -u push, plain "git push" is enough</span></pre>
+  </div>
+
+  <div class="box box-info">
+    <strong>Quick one-liner (when you know what changed):</strong><br>
+    <code>git add -A &amp;&amp; git commit -m "fix: your message" &amp;&amp; git push</code>
+  </div>
+
+  <h4 style="margin:16px 0 8px">If commit says “nothing to commit, working tree clean”</h4>
+  <div class="cmd-block nodirpre">
+    <pre><span class="com"># Nothing new to commit — either already committed, or no file changes.
+# Just push if you have local commits not on GitHub yet:</span>
+git push
+
+<span class="com"># Or check:</span>
+git status
+git log origin/main..HEAD --oneline   <span class="com"># commits waiting to push</span></pre>
+  </div>
+
+  <h4 style="margin:16px 0 8px">Feature branch workflow (optional, for PRs / CI)</h4>
+  <div class="cmd-block">
+    <div class="dir-label">~/…/enterprise-ai-assistant/</div>
+    <pre><span class="com"># New branch for a feature</span>
+git checkout -b feature/my-change
+
+<span class="com"># Edit code… then:</span>
+git add -A
+git commit -m "feat: describe change"
+git push -u origin feature/my-change
+
+<span class="com"># On GitHub: Pull requests → New PR → wait for CI → Merge</span>
+
+<span class="com"># Back to main and sync</span>
+git checkout main
+git pull origin main</pre>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">Phase 5 — Add GitHub Secrets for CI/CD</div>
   <p style="margin-bottom:10px">Go to: <strong>GitHub repo → Settings → Secrets and variables → Actions → New repository secret</strong></p>
   <table>
     <tr><th>Secret Name</th><th>Value to set</th><th>Required for</th></tr>
@@ -832,24 +921,23 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 </div>
 
 <div class="card">
-  <div class="card-title">Phase 4 — Daily Git Workflow</div>
-  <div class="cmd-block">
-    <div class="dir-label">~/…/enterprise-ai-assistant/</div>
-    <pre><span class="com"># Create a feature branch</span>
-git checkout -b feature/my-new-feature
+  <div class="card-title">Handy commands cheat sheet</div>
+  <div class="cmd-block nodirpre">
+    <pre><span class="com"># Who am I logged in as?</span>
+gh auth status
 
-<span class="com"># Make changes, then commit</span>
-git add -A
-git commit -m "feat: describe your change here"
-git push origin feature/my-new-feature
+<span class="com"># Re-login if push auth breaks again</span>
+gh auth login
+gh auth setup-git
 
-<span class="com"># On GitHub: open a Pull Request
-# → CI pipeline runs automatically on PR
-# → Review the green checkmarks
-# → Merge when all pass</span>
+<span class="com"># Show remotes</span>
+git remote -v
 
-<span class="com"># After merge: sync local main</span>
-git checkout main
+<span class="com"># If origin is wrong / missing</span>
+git remote remove origin   <span class="com"># only if needed</span>
+git remote add origin https://github.com/manishvel8/enterprise-ai-assistant.git
+
+<span class="com"># Pull latest from GitHub before you start work</span>
 git pull origin main</pre>
   </div>
 </div>

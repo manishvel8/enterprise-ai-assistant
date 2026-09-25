@@ -25,3 +25,9 @@ htmlcov/
 .coverage
 coverage.xml
 *.egg-info/
+
+# Downloaded K8s binaries (install system-wide — do not commit)
+/kubectl
+/minikube
+/minikube-linux-amd64
+*.deb

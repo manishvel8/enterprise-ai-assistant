@@ -1869,3 +1869,141 @@ If you ever see `Command 'pytest' not found` again, the venv isn’t active or d
 source venv/bin/activate
 pip install pytest pytest-asyncio httpx pytest-cov
 ```
+
+`gh` isn’t installed yet. Use one of these paths:
+
+---
+
+### Option A (recommended) — browser login with GitHub CLI
+
+```bash
+# Install gh
+sudo apt update && sudo apt install gh -y
+
+# Login (opens browser — no password typing in terminal)
+gh auth login
+```
+
+Choose:
+1. **GitHub.com**
+2. **HTTPS**
+3. **Login with a web browser**
+4. Follow the code shown in the terminal
+
+Then:
+
+```bash
+cd ~/Documents/Carrers/AI_Project/enterprise-ai-assistant
+gh auth setup-git
+git push -u origin main
+```
+
+---
+
+### Option B — PAT in the terminal (if you prefer)
+
+1. New classic token: https://github.com/settings/tokens  
+   - Enable **`repo`**  
+   - Generate → copy (don’t share it)
+
+2. Push with the token **as the password** (not your GitHub login password):
+
+```bash
+cd ~/Documents/Carrers/AI_Project/enterprise-ai-assistant
+GIT_TERMINAL_PROMPT=1 git push -u origin main
+```
+
+- Username: `manishvel8`  
+- Password: **paste the token only** (Ctrl+Shift+V). Nothing will show as you paste — that’s normal.
+
+---
+
+### Common reasons you still see that error
+
+| Mistake | Fix |
+|---------|-----|
+| Typed GitHub **account password** | Must use a **PAT** (`ghp_...`) |
+| Used the **old leaked token** after revoke | Create a **new** token |
+| Token missing **`repo`** scope | Edit/regenerate with `repo` checked |
+| Extra space when pasting | Paste carefully once |
+
+---
+
+Use **Option A** if you can — it avoids PAT paste mistakes. After it works, the repo should show code at:  
+https://github.com/manishvel8/enterprise-ai-assistant
+**Stop — revoke that token now.** You pasted it in chat and in a screenshot. Treat it as leaked.
+
+### 1. Revoke the exposed token
+Go to: https://github.com/settings/tokens → find that token → **Delete** / **Revoke**.
+
+### 2. Create a new token
+https://github.com/settings/tokens → **Generate new token (classic)**  
+- Note: `push-enterprise-ai`  
+- Expiration: 30–90 days  
+- Scope: check **`repo`** (full control of private repositories)  
+- Generate → **copy once** (don’t paste it into chat)
+
+### 3. Clear bad cached password, then push
+```bash
+cd ~/Documents/Carrers/AI_Project/enterprise-ai-assistant
+
+# Clear any saved wrong password for GitHub
+git credential reject <<EOF
+protocol=https
+host=github.com
+EOF
+
+git push -u origin main
+```
+
+When prompted:
+- **Username:** `manishvel8`
+- **Password:** paste the **new** token (not your GitHub password)
+
+### Why you got those errors
+| Error | Cause |
+|--------|--------|
+| `403 Permission denied` | Often wrong password, or token without `repo` scope |
+| `Password authentication is not supported` | You typed the GitHub **account password** — GitHub only accepts a **PAT** for HTTPS |
+
+### Optional: avoid typing the token every time
+```bash
+gh auth login
+# Choose HTTPS → authenticate via browser
+git push -u origin main
+```
+
+After a successful push, open: https://github.com/manishvel8/enterprise-ai-assistant  
+
+**Do not share the new token** in chat, screenshots, or commits.
+
+Updated the **🐙 GitHub Setup** tab with:
+
+- Correct repo: `manishvel8/enterprise-ai-assistant`
+- Auth fixes we used (`origin` missing, PAT vs password, SSL timeout, `gh auth login`)
+- **Phase 4 — Push again after code changes** (daily workflow)
+
+### Commands you’ll use every day after code changes
+
+```bash
+cd ~/Documents/Carrers/AI_Project/enterprise-ai-assistant
+
+git status
+git add -A
+git commit -m "feat: describe your change"
+git push
+```
+
+One-liner:
+
+```bash
+git add -A && git commit -m "feat: your message" && git push
+```
+
+No need to run `git init` or `git remote add` again.
+
+Refresh the HTML and open **GitHub Setup**:
+
+```bash
+xdg-open docs/hands-on/06-production-engineering.html
+```
