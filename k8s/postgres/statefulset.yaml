@@ -1,0 +1,93 @@
+---
+# postgres/statefulset.yaml — PostgreSQL StatefulSet.
+#
+# Why StatefulSet instead of Deployment?
+#   Databases need:
+#   1. Stable network identity (pod-0, pod-1 hostnames — not random)
+#   2. Stable storage (same PVC follows the same pod across restarts)
+#   3. Ordered startup/shutdown (master starts first, then replicas)
+#
+#   Deployments create pods with random names and attach storage randomly.
+#   StatefulSets create pods with predictable names (postgres-0) and give
+#   each pod its own dedicated PVC that follows it around.
+#
+# VolumeClaimTemplates:
+#   Unlike regular volumes (shared by all pods), volumeClaimTemplates
+#   creates a separate PVC for each pod. postgres-0 gets postgres-data-0,
+#   postgres-1 gets postgres-data-1.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: ai-assistant
+  labels:
+    app: postgres
+spec:
+  serviceName: "postgres-service"
+  replicas: 1   # single primary; add replicas for read replicas
+
+  selector:
+    matchLabels:
+      app: postgres
+
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+
+          ports:
+            - containerPort: 5432
+
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: ai-assistant-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: ai-assistant-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ai-assistant-secrets
+                  key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "2Gi"
+
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U $POSTGRES_USER -d $POSTGRES_DB
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 20Gi   # 20GB for document metadata and chat history

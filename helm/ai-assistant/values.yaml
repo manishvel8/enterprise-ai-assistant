@@ -1,0 +1,143 @@
+# values.yaml — Default values for the ai-assistant Helm chart.
+#
+# HOW TO USE VALUES:
+#   In templates: {{ .Values.backend.replicas }}
+#   Override on install: helm install myapp . --set backend.replicas=5
+#   Override from file:  helm install myapp . -f values.prod.yaml
+#   List effective values: helm get values myapp
+#
+# ENVIRONMENT OVERRIDES:
+#   Create values.dev.yaml, values.staging.yaml, values.prod.yaml
+#   and pass the appropriate file: helm upgrade myapp . -f values.prod.yaml
+
+# ── Global settings ───────────────────────────────────────────────────────────
+global:
+  namespace: ai-assistant
+  imageRegistry: ""           # set to "registry.yourdomain.com/" for private registries
+  imagePullPolicy: IfNotPresent
+  imageTag: latest
+
+# ── Backend (FastAPI) ─────────────────────────────────────────────────────────
+backend:
+  enabled: true
+  replicas: 2
+  image: enterprise-ai-assistant/backend
+  port: 8000
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2000m"
+      memory: "2Gi"
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilization: 70
+
+# ── LangGraph Agent ───────────────────────────────────────────────────────────
+langgraphAgent:
+  enabled: true
+  replicas: 1               # Increase to 2+ after PostgresSaver is enabled
+  image: enterprise-ai-assistant/langgraph-agent
+  port: 7860
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2000m"
+      memory: "2Gi"
+  hpa:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 5
+    targetCPUUtilization: 70
+
+# ── Worker (Celery) ───────────────────────────────────────────────────────────
+worker:
+  enabled: true
+  replicas: 2
+  image: enterprise-ai-assistant/worker
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "256Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+
+# ── Frontend (Angular/Nginx) ──────────────────────────────────────────────────
+frontend:
+  enabled: true
+  replicas: 2
+  image: enterprise-ai-assistant/frontend
+  port: 80
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+
+# ── PostgreSQL ────────────────────────────────────────────────────────────────
+postgres:
+  enabled: true
+  image: postgres:16-alpine
+  storageSize: 20Gi
+  storageClass: ""           # use cluster default (hostPath in minikube)
+
+# ── Redis ─────────────────────────────────────────────────────────────────────
+redis:
+  enabled: true
+  image: redis:7-alpine
+  storageSize: 5Gi
+
+# ── Qdrant ────────────────────────────────────────────────────────────────────
+qdrant:
+  enabled: true
+  image: qdrant/qdrant:v1.12.4
+  storageSize: 20Gi
+  port: 6333
+
+# ── Neo4j ─────────────────────────────────────────────────────────────────────
+neo4j:
+  enabled: true
+  image: neo4j:5.26-community
+  storageSize: 20Gi
+
+# ── MinIO ─────────────────────────────────────────────────────────────────────
+minio:
+  enabled: true
+  image: minio/minio:RELEASE.2024-11-07T00-52-20Z
+  storageSize: 50Gi
+
+# ── Ingress ───────────────────────────────────────────────────────────────────
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    frontend: app.yourdomain.com
+    backend: api.yourdomain.com
+    langgraph: lg.yourdomain.com
+  tls:
+    enabled: false           # set true in production with cert-manager
+    secretName: ai-assistant-tls
+
+# ── Application config ────────────────────────────────────────────────────────
+config:
+  openaiChatModel: gpt-4o
+  openaiEmbeddingModel: text-embedding-3-small
+  logLevel: INFO
+  enableDebugPanel: "true"
+  corsOrigins: "http://localhost:4200"
+
+# ── Secrets (values are placeholders — use real values via --set or sealed-secrets) ──
+secrets:
+  openaiApiKey: "REPLACE_ME"
+  postgresPassword: "dev_password"
+  neo4jPassword: "dev_password"
+  langfusePublicKey: ""
+  langfuseSecretKey: ""

@@ -1,0 +1,20 @@
+---
+# namespace.yaml — Create the dedicated Kubernetes namespace for all resources.
+#
+# Why namespaces?
+#   Kubernetes namespaces provide logical isolation within a cluster.
+#   All resources (Pods, Services, etc.) for this app go in 'ai-assistant'.
+#   This makes it easy to:
+#   - Apply RBAC (role-based access control) to this namespace only
+#   - Delete the entire app: kubectl delete namespace ai-assistant
+#   - Avoid name collisions with other apps in the same cluster
+#
+# Apply: kubectl apply -f k8s/namespace.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-assistant
+  labels:
+    app.kubernetes.io/name: enterprise-ai-assistant
+    app.kubernetes.io/version: "1.0.0"
+    environment: production

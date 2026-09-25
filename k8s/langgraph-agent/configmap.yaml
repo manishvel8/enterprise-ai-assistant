@@ -1,0 +1,51 @@
+---
+# k8s/langgraph-agent/configmap.yaml — Non-sensitive config for the LangGraph agent.
+#
+# WHY CONFIGMAP?
+#   ConfigMaps store non-sensitive configuration separate from the container image.
+#   This lets you change config (e.g., log level, model name) without rebuilding the image.
+#   In contrast, Secrets store sensitive data (API keys, passwords).
+#
+# RULE: ConfigMap = anything you'd commit to git (not secret).
+#       Secret     = anything you'd NEVER commit to git (API keys, passwords).
+#
+# Apply: kubectl apply -f k8s/langgraph-agent/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: langgraph-agent-config
+  namespace: ai-assistant
+  labels:
+    app: langgraph-agent
+    app.kubernetes.io/component: langgraph-agent
+data:
+  # ── Application settings ──────────────────────────────────────────────────
+  APP_HOST: "0.0.0.0"
+  APP_PORT: "7860"
+
+  # ── OpenAI models ─────────────────────────────────────────────────────────
+  OPENAI_CHAT_MODEL: "gpt-4o"
+  OPENAI_EMBEDDING_MODEL: "text-embedding-3-small"
+
+  # ── Qdrant (uses container name within the cluster) ──────────────────────
+  QDRANT_HOST: "qdrant-service"
+  QDRANT_PORT: "6333"
+  QDRANT_URL: "http://qdrant-service:6333"
+  QDRANT_COLLECTION: "chunks"
+
+  # ── PostgreSQL (conversation memory + LangGraph checkpointer) ────────────
+  CONVERSATION_DB_HOST: "postgres-service"
+  CONVERSATION_DB_PORT: "5432"
+  CONVERSATION_DB_NAME: "ai_assistant"
+  CONVERSATION_DB_USER: "ai_user"
+
+  # ── Langfuse (LLM observability) ─────────────────────────────────────────
+  LANGFUSE_HOST: "http://langfuse-server-service:3000"
+  LANGFUSE_ENABLED: "true"
+
+  # ── Feature flags ─────────────────────────────────────────────────────────
+  USE_MCP_TOOLS: "false"
+  MAX_QUALITY_RETRIES: "2"
+
+  # ── Logging ───────────────────────────────────────────────────────────────
+  LOG_LEVEL: "INFO"

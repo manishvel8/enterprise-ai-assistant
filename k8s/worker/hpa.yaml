@@ -1,0 +1,33 @@
+---
+# worker/hpa.yaml — HPA for the Celery document processing workers.
+#
+# Workers scale independently from the backend API.
+# When users upload many documents, workers scale up to process them faster.
+# When the queue is empty, workers scale back down to save cost.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: worker-hpa
+  namespace: ai-assistant
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: worker
+
+  minReplicas: 1     # Can scale to 0 in production with KEDA
+  maxReplicas: 8
+
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30   # Scale up quickly when documents queue up
+    scaleDown:
+      stabilizationWindowSeconds: 600  # Scale down slowly (10 min) to avoid oscillation

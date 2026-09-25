@@ -12,15 +12,20 @@ Why this pattern?
   - Type-safe: wrong types raise validation errors at startup, not at runtime
 """
 
+from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List
+
+# Load project-root .env whether uvicorn is started from backend/ or repo root
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]  # .../enterprise-ai-assistant
+_ENV_FILE = _PROJECT_ROOT / ".env"
 
 
 class Settings(BaseSettings):
     """All application configuration, sourced from environment variables."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(_ENV_FILE) if _ENV_FILE.exists() else ".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",             # ignore unknown env vars (avoids errors on K8s)
@@ -47,8 +52,11 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60
 
-    # --- OpenAI ---
+    # --- OpenAI (or OpenAI-compatible gateway) ---
     openai_api_key: str = ""
+    # Custom base URL for internal gateways, e.g. http://host:port/v1
+    # Leave empty to use the default OpenAI cloud endpoint.
+    openai_api_base: str = ""
     openai_chat_model: str = "gpt-4o"
     openai_embedding_model: str = "text-embedding-3-small"
     openai_whisper_model: str = "whisper-1"

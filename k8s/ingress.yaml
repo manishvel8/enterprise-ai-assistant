@@ -1,0 +1,85 @@
+---
+# ingress.yaml — Kubernetes Ingress (HTTP router).
+#
+# The Ingress is the single entry point for external traffic.
+# It routes requests to the right Service based on hostname/path.
+#
+# What Ingress does:
+#   - app.yourdomain.com → frontend-service (Angular SPA)
+#   - api.yourdomain.com → backend-service (FastAPI)
+#   - api.yourdomain.com/api/chat/stream → backend-service (with SSE config)
+#
+# Requirements:
+#   - An Ingress Controller must be installed in the cluster:
+#     nginx: kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
+#     minikube: minikube addons enable ingress
+#
+# SSL/TLS:
+#   - cert-manager creates and auto-renews Let's Encrypt certificates
+#   - tls section attaches the certificate to the Ingress
+#   - Install cert-manager: kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
+#
+# Apply: kubectl apply -f k8s/ingress.yaml -n ai-assistant
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ai-assistant-ingress
+  namespace: ai-assistant
+  annotations:
+    # nginx-ingress annotations
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"   # Allow 100MB file uploads
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"  # 5-min timeout for SSE
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+
+    # SSE streaming: disable buffering for SSE endpoints
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+
+    # TLS: let cert-manager issue a Let's Encrypt certificate
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+
+  tls:
+    - hosts:
+        - app.yourdomain.com
+        - api.yourdomain.com
+      secretName: ai-assistant-tls    # cert-manager stores the cert here
+
+  rules:
+    # Frontend: Angular SPA
+    - host: app.yourdomain.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend-service
+                port:
+                  number: 80
+
+    # Backend: FastAPI REST + SSE
+    - host: api.yourdomain.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-service
+                port:
+                  number: 8000
+
+    # LangGraph Agent: 7-node graph + HITL + memory
+    - host: lg.yourdomain.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: langgraph-agent-service
+                port:
+                  number: 7860

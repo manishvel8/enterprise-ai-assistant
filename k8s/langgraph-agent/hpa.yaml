@@ -1,0 +1,92 @@
+---
+# k8s/langgraph-agent/hpa.yaml — HorizontalPodAutoscaler for the LangGraph Agent.
+#
+# WHAT IS HPA?
+#   HPA automatically scales the number of pods based on observed metrics.
+#   When traffic increases: add pods. When traffic decreases: remove pods.
+#   This is Kubernetes horizontal scaling (more pods), not vertical (bigger pods).
+#
+# HOW HPA WORKS:
+#   1. Metrics server collects CPU/memory from each pod (kubectl top pods)
+#   2. HPA compares current metric to target
+#   3. HPA calculates: desired_replicas = ceil(current_replicas × current/target)
+#   4. HPA updates the Deployment's replicas field
+#   5. Deployment controller creates/deletes pods
+#
+# EXAMPLE:
+#   target = 60% CPU, current = 3 pods at 90% CPU each
+#   desired = ceil(3 × 90/60) = ceil(4.5) = 5 pods
+#   → HPA creates 2 more pods
+#
+# PREREQUISITE:
+#   metrics-server must be installed:
+#     kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+#   minikube: minikube addons enable metrics-server
+#
+# SCALING BEHAVIOUR (important!):
+#   Scale UP:   fast (adds pods quickly to handle load spikes)
+#   Scale DOWN: slow (waits 5 minutes before scaling down to avoid flapping)
+#
+# LANGGRAPH NOTE:
+#   With MemorySaver (in-memory checkpointer), scaling to 2+ pods means
+#   different pods handle different requests of the same conversation.
+#   Until PostgresSaver is enabled, keep minReplicas=1 to avoid state loss.
+#   After PostgresSaver: scale freely (state is shared via Postgres).
+#
+# Apply: kubectl apply -f k8s/langgraph-agent/hpa.yaml -n ai-assistant
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: langgraph-agent-hpa
+  namespace: ai-assistant
+  labels:
+    app: langgraph-agent
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: langgraph-agent
+
+  # Min/Max replicas
+  # minReplicas=1: always have at least 1 pod (for MemorySaver mode)
+  # Change to minReplicas=2 after PostgresSaver for HA
+  minReplicas: 1
+  maxReplicas: 5
+
+  metrics:
+    # ── CPU-based scaling ──────────────────────────────────────────────────
+    # Scale when average CPU across all pods exceeds 70%.
+    # LangGraph CPU spikes during graph execution (7 sequential LLM calls).
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+
+    # ── Memory-based scaling ──────────────────────────────────────────────
+    # Scale when memory exceeds 80%.
+    # LangGraph stores graph state in memory — high traffic = high memory.
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+  # ── Scale-down behaviour ───────────────────────────────────────────────
+  # Wait 5 minutes before scaling down (prevents thrashing).
+  # LangGraph execution takes 5-30s; scale-down too quickly discards active sessions.
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300    # 5 minutes
+      policies:
+        - type: Pods
+          value: 1                       # remove at most 1 pod per 60s
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 30     # 30 seconds (scale up fast)
+      policies:
+        - type: Pods
+          value: 2                       # add at most 2 pods per 30s
+          periodSeconds: 30

@@ -37,10 +37,10 @@ openai==1.57.4
 # celery==5.4.0
 
 # --- Qdrant (added in Milestone 14) ---
-# qdrant-client==1.12.1
+qdrant-client==1.12.1
 
 # --- Neo4j (added in Milestone 17) ---
-# neo4j==5.27.0
+neo4j==5.27.0
 
 # --- Langfuse (added in Milestone 23) ---
 # langfuse==2.57.4
@@ -56,7 +56,7 @@ openai==1.57.4
 # pdfplumber==0.11.4               # Better PDF table extraction
 
 # --- MinIO (added in Milestone 7) ---
-# minio==7.2.11
+minio==7.2.11
 
 # --- Rate Limiting ---
 # slowapi==0.1.9

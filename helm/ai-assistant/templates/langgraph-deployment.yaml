@@ -1,0 +1,119 @@
+---
+{{- if .Values.langgraphAgent.enabled }}
+# LangGraph Agent Deployment — rendered from Helm template.
+# Controlled by values.yaml:  langgraphAgent.replicas, .image, .resources, etc.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: langgraph-agent
+  namespace: {{ include "ai-assistant.namespace" . }}
+  labels:
+    {{ include "ai-assistant.labels" . | nindent 4 }}
+    app: langgraph-agent
+spec:
+  replicas: {{ .Values.langgraphAgent.replicas }}
+  selector:
+    matchLabels:
+      {{ include "ai-assistant.selectorLabels" "langgraph-agent" | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        {{ include "ai-assistant.selectorLabels" "langgraph-agent" | nindent 8 }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: langgraph-agent
+          image: {{ .Values.langgraphAgent.image }}:{{ .Values.global.imageTag }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.langgraphAgent.port }}
+          envFrom:
+            - configMapRef:
+                name: ai-assistant-config
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-assistant-secrets
+                  key: OPENAI_API_KEY
+            - name: CONVERSATION_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ai-assistant-secrets
+                  key: POSTGRES_PASSWORD
+          resources:
+            requests:
+              cpu: {{ .Values.langgraphAgent.resources.requests.cpu | quote }}
+              memory: {{ .Values.langgraphAgent.resources.requests.memory | quote }}
+            limits:
+              cpu: {{ .Values.langgraphAgent.resources.limits.cpu | quote }}
+              memory: {{ .Values.langgraphAgent.resources.limits.memory | quote }}
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: {{ .Values.langgraphAgent.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: {{ .Values.langgraphAgent.port }}
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: {{ .Values.langgraphAgent.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: langgraph-agent-service
+  namespace: {{ include "ai-assistant.namespace" . }}
+  labels:
+    {{ include "ai-assistant.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: langgraph-agent
+  ports:
+    - name: http
+      port: {{ .Values.langgraphAgent.port }}
+      targetPort: {{ .Values.langgraphAgent.port }}
+---
+{{- if .Values.langgraphAgent.hpa.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: langgraph-agent-hpa
+  namespace: {{ include "ai-assistant.namespace" . }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: langgraph-agent
+  minReplicas: {{ .Values.langgraphAgent.hpa.minReplicas }}
+  maxReplicas: {{ .Values.langgraphAgent.hpa.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.langgraphAgent.hpa.targetCPUUtilization }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,65 @@
+---
+# backend/hpa.yaml — HorizontalPodAutoscaler for the FastAPI backend.
+#
+# HPA monitors CPU/memory and adjusts replica count automatically.
+#
+# How it works:
+#   1. metrics-server watches Pod CPU usage
+#   2. When average CPU > 70% across all backend pods:
+#      HPA increases replicas (up to maxReplicas)
+#   3. When CPU drops below 70% and stays low:
+#      HPA decreases replicas (down to minReplicas)
+#
+# This is horizontal scaling — more pods, not bigger pods.
+# Vertical scaling (bigger pods) requires VPA (VerticalPodAutoscaler).
+#
+# Why scale the backend but not the frontend?
+#   - The frontend serves static files (Angular build) — nearly zero CPU
+#   - The backend does all the heavy computation (OpenAI calls, embeddings, etc.)
+#
+# Prerequisite: metrics-server must be installed in the cluster.
+#   minikube: minikube addons enable metrics-server
+#   EKS/GKE: usually pre-installed
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend-hpa
+  namespace: ai-assistant
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+
+  minReplicas: 2      # Always run at least 2 for high availability
+  maxReplicas: 10     # Scale up to 10 under heavy load
+
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70    # Scale when average CPU > 70%
+
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80    # Scale when average memory > 80%
+
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60     # Wait 60s before scaling up
+      policies:
+        - type: Pods
+          value: 2                        # Add at most 2 pods at a time
+          periodSeconds: 60
+
+    scaleDown:
+      stabilizationWindowSeconds: 300    # Wait 5 minutes before scaling down
+      policies:
+        - type: Pods
+          value: 1                        # Remove at most 1 pod at a time
+          periodSeconds: 120

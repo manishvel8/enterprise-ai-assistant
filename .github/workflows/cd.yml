@@ -1,0 +1,208 @@
+---
+# .github/workflows/cd.yml — Continuous Deployment Pipeline
+#
+# WHAT IS CD?
+#   CD (Continuous Deployment) = automatically deploying code to production
+#   after the CI pipeline passes.
+#
+# PIPELINE STAGES:
+#   CI passes (images built and pushed)
+#       ↓
+#   CD triggered on push to main
+#       ↓
+#   Update K8s deployment with new image tag
+#       ↓
+#   kubectl apply → Kubernetes rolling update
+#       ↓
+#   Smoke tests (verify the deployment actually works)
+#       ↓
+#   Notify team (Slack)
+#
+# ROLLBACK:
+#   If smoke tests fail → automatic rollback:
+#     kubectl rollout undo deployment/backend
+#
+# PREREQUISITES:
+#   GitHub Secrets required (Settings → Secrets and Variables → Actions):
+#     KUBECONFIG_DATA  — base64-encoded kubeconfig for the production cluster
+#                        How to get: base64 -w 0 ~/.kube/config
+#     SLACK_WEBHOOK_URL — optional, for deployment notifications
+#
+# HOW KUBECTL WORKS IN CI:
+#   We install kubectl, decode KUBECONFIG from a secret, and run kubectl commands
+#   against the production Kubernetes cluster (e.g., GKE, EKS, local minikube).
+
+name: CD — Deploy to Kubernetes
+
+on:
+  push:
+    branches: [main]          # Only deploy when code reaches main
+  workflow_dispatch:           # Allow manual deploys from GitHub UI
+
+env:
+  BACKEND_IMAGE: ghcr.io/${{ github.repository_owner }}/ai-backend
+  LANGGRAPH_IMAGE: ghcr.io/${{ github.repository_owner }}/ai-langgraph-agent
+  FRONTEND_IMAGE: ghcr.io/${{ github.repository_owner }}/ai-frontend
+  WORKER_IMAGE: ghcr.io/${{ github.repository_owner }}/ai-worker
+  NAMESPACE: ai-assistant
+
+jobs:
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 1: Deploy to Kubernetes
+  # ──────────────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to Kubernetes
+    runs-on: ubuntu-latest
+    environment: production    # GitHub Environment for approval gates and secrets
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Install kubectl
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: "v1.28.0"
+
+      # Configure kubectl to connect to the production cluster
+      - name: Configure kubectl
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_DATA }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+          kubectl version --client
+
+      # Verify cluster is reachable
+      - name: Verify Kubernetes connection
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+
+      # ── Apply ConfigMaps and non-sensitive configs ──────────────────────
+      - name: Apply ConfigMaps
+        run: |
+          kubectl apply -f k8s/namespace.yaml
+          kubectl apply -f k8s/configmap.yaml
+          kubectl apply -f k8s/langgraph-agent/configmap.yaml
+
+      # ── Update image tags in deployments ────────────────────────────────
+      # We update the image tag to the current commit SHA.
+      # This ensures the deployment references the EXACT image built by CI.
+      - name: Update backend deployment image
+        run: |
+          kubectl set image deployment/backend \
+            backend=${{ env.BACKEND_IMAGE }}:${{ github.sha }} \
+            -n ${{ env.NAMESPACE }}
+
+      - name: Update langgraph-agent deployment image
+        run: |
+          kubectl set image deployment/langgraph-agent \
+            langgraph-agent=${{ env.LANGGRAPH_IMAGE }}:${{ github.sha }} \
+            -n ${{ env.NAMESPACE }}
+
+      - name: Update frontend deployment image
+        run: |
+          kubectl set image deployment/frontend \
+            frontend=${{ env.FRONTEND_IMAGE }}:${{ github.sha }} \
+            -n ${{ env.NAMESPACE }}
+
+      - name: Update worker deployment image
+        run: |
+          kubectl set image deployment/worker \
+            worker=${{ env.WORKER_IMAGE }}:${{ github.sha }} \
+            -n ${{ env.NAMESPACE }}
+
+      # ── Apply remaining K8s manifests ────────────────────────────────────
+      - name: Apply K8s manifests
+        run: |
+          kubectl apply -f k8s/langgraph-agent/service.yaml
+          kubectl apply -f k8s/langgraph-agent/hpa.yaml
+          kubectl apply -f k8s/ingress.yaml
+
+      # ── Wait for rollout to complete ─────────────────────────────────────
+      # "rollout status" blocks until the deployment is complete.
+      # Times out after 5 minutes (300s). If it times out, we rollback.
+      - name: Wait for backend rollout
+        id: wait-backend
+        run: |
+          kubectl rollout status deployment/backend \
+            -n ${{ env.NAMESPACE }} \
+            --timeout=300s
+
+      - name: Wait for langgraph-agent rollout
+        id: wait-langgraph
+        run: |
+          kubectl rollout status deployment/langgraph-agent \
+            -n ${{ env.NAMESPACE }} \
+            --timeout=300s
+
+      # ── Post-deployment smoke tests ──────────────────────────────────────
+      # Smoke tests = quick basic checks that the deployment worked.
+      # Run from within the cluster (kubectl exec) for reliability.
+      - name: Run smoke tests
+        id: smoke-tests
+        run: |
+          echo "=== Smoke Tests ==="
+
+          # Get the backend service cluster IP
+          BACKEND_IP=$(kubectl get service backend-service \
+            -n ${{ env.NAMESPACE }} \
+            -o jsonpath='{.spec.clusterIP}')
+
+          # Test health endpoint
+          kubectl run smoke-test --image=curlimages/curl:latest \
+            --restart=Never --rm -i \
+            -n ${{ env.NAMESPACE }} \
+            -- curl -f "http://${BACKEND_IP}:8000/health" \
+            && echo "✅ Backend health: PASS" \
+            || echo "❌ Backend health: FAIL"
+
+          echo "=== Smoke Tests Complete ==="
+
+      # ── Automatic rollback on failure ───────────────────────────────────
+      # If smoke tests or rollout failed, rollback immediately.
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          echo "⚠️ Deployment failed — initiating rollback"
+          kubectl rollout undo deployment/backend -n ${{ env.NAMESPACE }} || true
+          kubectl rollout undo deployment/langgraph-agent -n ${{ env.NAMESPACE }} || true
+          kubectl rollout undo deployment/frontend -n ${{ env.NAMESPACE }} || true
+          echo "✅ Rollback complete"
+
+      # ── Deployment summary ───────────────────────────────────────────────
+      - name: Deployment summary
+        if: always()
+        run: |
+          echo "====================================="
+          echo "Deployment Summary"
+          echo "====================================="
+          echo "Image tag: ${{ github.sha }}"
+          echo "Namespace: ${{ env.NAMESPACE }}"
+          kubectl get pods -n ${{ env.NAMESPACE }} --no-headers | head -20
+          echo "====================================="
+
+      # ── Slack notification ───────────────────────────────────────────────
+      - name: Notify Slack
+        if: always()
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "text": "${{ job.status == 'success' && '✅ Deployment SUCCESS' || '❌ Deployment FAILED' }}: ${{ github.repository }} @ ${{ github.sha }}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*${{ job.status == 'success' && '✅ Deployment SUCCESS' || '❌ Deployment FAILED' }}*\n*Repo:* ${{ github.repository }}\n*Branch:* ${{ github.ref_name }}\n*Commit:* `${{ github.sha }}`\n*Author:* ${{ github.actor }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+        continue-on-error: true   # don't fail the job if Slack is unavailable

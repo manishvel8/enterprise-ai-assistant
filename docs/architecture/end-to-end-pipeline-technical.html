@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Enterprise AI Assistant — End-to-End Technical Pipeline</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #171b26;
+      --surface2: #1e2433;
+      --border: #2d3548;
+      --text: #e8ecf4;
+      --muted: #8b95a8;
+      --accent: #7c6efe;
+      --accent2: #4ade80;
+      --warn: #facc15;
+      --error: #f87171;
+      --info: #38bdf8;
+      --postgres: #336791;
+      --redis: #dc382d;
+      --minio: #c72c48;
+      --qdrant: #ff6b35;
+      --neo4j: #018bff;
+      --openai: #10a37f;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+      font-size: 15px;
+    }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 32px 24px 80px; }
+    h1 { font-size: 2rem; font-weight: 700; margin-bottom: 8px; }
+    .subtitle { color: var(--muted); margin-bottom: 32px; max-width: 720px; }
+    h2 {
+      font-size: 1.35rem;
+      margin: 48px 0 16px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+      color: var(--accent);
+    }
+    h3 { font-size: 1.05rem; margin: 24px 0 10px; color: var(--text); }
+    p { margin-bottom: 12px; color: #c8d0de; }
+    a { color: var(--accent); }
+    .toc {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px 24px;
+      margin-bottom: 32px;
+    }
+    .toc ol { padding-left: 20px; }
+    .toc li { margin: 6px 0; }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      margin: 16px 0;
+    }
+    .card-title { font-weight: 600; margin-bottom: 10px; font-size: 1rem; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 768px) { .grid-2 { grid-template-columns: 1fr; } }
+    .badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      margin-right: 6px;
+      margin-bottom: 4px;
+    }
+    .badge-postgres { background: rgba(51,103,145,.25); color: #7eb8e8; }
+    .badge-redis { background: rgba(220,56,45,.2); color: #f87171; }
+    .badge-minio { background: rgba(199,44,72,.2); color: #fb7185; }
+    .badge-qdrant { background: rgba(255,107,53,.2); color: #fb923c; }
+    .badge-neo4j { background: rgba(1,139,255,.2); color: #38bdf8; }
+    .badge-openai { background: rgba(16,163,127,.2); color: #4ade80; }
+    .badge-api { background: rgba(124,110,254,.2); color: #a5b4fc; }
+    .badge-ui { background: rgba(250,204,21,.15); color: #fde047; }
+    pre, code {
+      font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+      font-size: 13px;
+    }
+    pre {
+      background: #0a0d14;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      overflow-x: auto;
+      margin: 12px 0;
+      color: #c9d1d9;
+    }
+    code { background: var(--surface2); padding: 2px 6px; border-radius: 4px; color: #a5b4fc; }
+    pre code { background: none; padding: 0; color: inherit; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0;
+      font-size: 13px;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 10px 12px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: var(--surface2); color: var(--muted); font-weight: 600; }
+    tr:nth-child(even) td { background: rgba(255,255,255,.02); }
+    .flow {
+      background: #0a0d14;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+      overflow-x: auto;
+      font-family: monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre;
+      color: #94a3b8;
+    }
+    .step {
+      display: flex;
+      gap: 16px;
+      margin: 16px 0;
+      padding: 16px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--accent);
+      border-radius: 8px;
+    }
+    .step-num {
+      flex-shrink: 0;
+      width: 32px;
+      height: 32px;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 14px;
+    }
+    .step-body { flex: 1; }
+    .step-body h4 { margin-bottom: 6px; font-size: 1rem; }
+    .observe {
+      margin-top: 10px;
+      padding: 10px 12px;
+      background: rgba(56,189,248,.08);
+      border: 1px solid rgba(56,189,248,.2);
+      border-radius: 6px;
+      font-size: 13px;
+    }
+    .observe strong { color: var(--info); }
+    .warn-box {
+      background: rgba(250,204,21,.08);
+      border: 1px solid rgba(250,204,21,.25);
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin: 16px 0;
+      font-size: 14px;
+    }
+    .arch-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background: var(--surface);
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      margin: 16px 0;
+    }
+    .arch-box {
+      padding: 10px 16px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      text-align: center;
+      min-width: 100px;
+    }
+    .arrow { color: var(--muted); font-size: 18px; }
+    footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--border); color: var(--muted); font-size: 13px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Enterprise AI Assistant</h1>
+  <p class="subtitle">
+    Complete end-to-end technical walkthrough: PDF upload in the UI through chunking, embeddings,
+    Qdrant + Postgres + Neo4j storage, then user query → retrieval → LLM → guardrails → cited answer.
+    Mapped to real files, URLs, and CLI commands in this project.
+  </p>
+
+  <div class="toc card">
+    <div class="card-title">Contents</div>
+    <ol>
+      <li><a href="#architecture">System architecture (4 data stores)</a></li>
+      <li><a href="#prereq">Prerequisites — what must be running</a></li>
+      <li><a href="#upload">Phase A — Document upload (UI → API → MinIO → Postgres → Redis)</a></li>
+      <li><a href="#worker">Phase B — Celery worker pipeline (parse → chunk → embed → store)</a></li>
+      <li><a href="#storage">Phase C — Where data lives (MinIO, Postgres, Qdrant, Neo4j)</a></li>
+      <li><a href="#query">Phase D — User query → RAG agent workflow → answer</a></li>
+      <li><a href="#debug">How to observe everything (UI, debug panel, CLI, URLs)</a></li>
+      <li><a href="#params">Key parameters reference table</a></li>
+      <li><a href="#commands">Copy-paste commands cheat sheet</a></li>
+    </ol>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <h2 id="architecture">1. System architecture</h2>
+
+  <p>Each store has a distinct job. Never confuse them in interviews.</p>
+
+  <div class="arch-row">
+    <div class="arch-box badge-ui" style="background:#422006;color:#fde047;">Angular UI<br>:4200</div>
+    <span class="arrow">→</span>
+    <div class="arch-box badge-api" style="background:#312e81;color:#a5b4fc;">FastAPI<br>:8000</div>
+    <span class="arrow">→</span>
+    <div class="arch-box badge-redis" style="background:#450a0a;color:#fca5a5;">Redis<br>Celery queue</div>
+    <span class="arrow">→</span>
+    <div class="arch-box badge-api" style="background:#312e81;color:#a5b4fc;">Celery Worker</div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-title"><span class="badge badge-minio">MinIO</span> Object storage</div>
+      <p>Raw PDF bytes. Not in Postgres.</p>
+      <code>documents/{doc_id}/original.pdf</code>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="badge badge-postgres">Postgres</span> Metadata + chat</div>
+      <p>Document status, chunk text, sessions, messages.</p>
+      <code>documents, chunks, sessions, messages</code>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="badge badge-qdrant">Qdrant</span> Vector DB</div>
+      <p>1536-d embeddings for semantic search.</p>
+      <code>collection: chunks</code>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="badge badge-neo4j">Neo4j</span> Knowledge graph</div>
+      <p>Entities, topics, relationships (GraphRAG).</p>
+      <code>Document, Chunk, Person, Organization…</code>
+    </div>
+  </div>
+
+  <div class="flow">┌─────────────────────────────────────────────────────────────────────────────┐
+│                        INGESTION (async, Celery worker)                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  UI upload → FastAPI → MinIO (file) + Postgres (metadata PENDING)            │
+│           → Redis queue → Worker: download → parse → normalize → chunk         │
+│           → embed (OpenAI) → Qdrant (vectors) + Postgres (chunk rows)          │
+│           → Neo4j (entities/graph) → Postgres status COMPLETE                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         QUERY (sync, FastAPI request)                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Chat UI → POST /api/chat → 9-agent workflow:                                │
+│    Router → QueryRewrite → Retriever (Qdrant) → ContextBuilder               │
+│    → Answer (GPT-4o + RAG prompt) → Critic (grounding) → Memory (Postgres)   │
+│  → JSON: answer + citations + debug                                          │
+└─────────────────────────────────────────────────────────────────────────────┘</div>
+
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <h2 id="prereq">2. Prerequisites</h2>
+
+  <table>
+    <tr><th>Process</th><th>Command / URL</th><th>Why required</th></tr>
+    <tr><td>Docker infra</td><td><code>docker-compose -f docker-compose.dev.yml up -d</code></td><td>Postgres, Redis, Qdrant, Neo4j, MinIO</td></tr>
+    <tr><td>FastAPI</td><td><code>uvicorn app.main:app --reload --port 8000</code></td><td>Upload API + Chat API</td></tr>
+    <tr><td>Celery worker</td><td><code>celery -A app.workers.document_worker.celery_app worker --queues=document_processing</code></td><td>PDF processing — without this, docs stay PENDING</td></tr>
+    <tr><td>Angular UI</td><td><code>npm start</code> → http://localhost:4200</td><td>Upload + Chat</td></tr>
+    <tr><td>OpenAI gateway</td><td><code>OPENAI_API_KEY</code> + <code>OPENAI_API_BASE</code> in <code>.env</code></td><td>Embeddings + chat + entity extraction</td></tr>
+  </table>
+
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <h2 id="upload">3. Phase A — Document upload</h2>
+
+  <div class="step">
+    <div class="step-num">1</div>
+    <div class="step-body">
+      <h4>User selects PDF in Documents page</h4>
+      <p><strong>File:</strong> <code>frontend/src/app/documents/documents-page/documents-page.component.ts</code></p>
+      <p><code>uploadFile()</code> → <code>ApiService.uploadDocument(file)</code></p>
+      <p>Allowed: pdf, docx, pptx, xlsx, csv, txt, png, jpg, jpeg, mp3, mp4, wav · Max 100 MB</p>
+      <div class="observe"><strong>Observe:</strong> Browser DevTools → Network → <code>POST /api/documents/upload</code> → expect <strong>202 Accepted</strong></div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">2</div>
+    <div class="step-body">
+      <h4>FastAPI receives multipart upload</h4>
+      <p><strong>File:</strong> <code>backend/app/api/documents.py</code> → <code>upload_document()</code></p>
+      <ul style="margin-left:18px;color:#c8d0de;">
+        <li>Generates <code>document_id = doc_{uuid12}</code></li>
+        <li>Calls <code>storage_service.upload_file()</code></li>
+        <li>Inserts row in Postgres <code>documents</code> (status = <code>PENDING</code>)</li>
+        <li>Enqueues Celery: <code>process_document.delay(document_id, file_name, file_type)</code></li>
+      </ul>
+      <div class="observe"><strong>Observe:</strong> API terminal logs: <code>Upload received</code>, <code>Stored at: documents/doc_…/original.pdf</code>, <code>Enqueued processing task</code></div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">3</div>
+    <div class="step-body">
+      <h4>MinIO stores raw bytes</h4>
+      <p><strong>File:</strong> <code>backend/app/services/storage_service.py</code></p>
+      <p>Bucket: <code>ai-documents</code> · Key: <code>documents/{document_id}/original.pdf</code></p>
+      <p>Postgres <code>storage_path</code> column stores this key (not the display filename).</p>
+      <div class="observe"><strong>Observe:</strong> http://localhost:9001 → login <code>minioadmin</code>/<code>minioadmin</code> → bucket <code>ai-documents</code></div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">4</div>
+    <div class="step-body">
+      <h4>Postgres metadata row created</h4>
+      <p><strong>Table:</strong> <code>documents</code></p>
+      <pre><code>SELECT document_id, file_name, storage_path, status, chunk_count, created_at
+FROM documents ORDER BY created_at DESC LIMIT 5;</code></pre>
+      <div class="observe"><strong>Observe:</strong> <code>psql -h localhost -p 5433 -U ai_user -d ai_assistant</code> (password: <code>dev_password</code>)</div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">5</div>
+    <div class="step-body">
+      <h4>Task queued in Redis</h4>
+      <p><strong>Broker:</strong> <code>redis://localhost:6379/0</code> · Queue: <code>document_processing</code></p>
+      <div class="observe"><strong>Observe:</strong> <code>redis-cli ping</code> → PONG · Celery worker terminal picks up task within seconds</div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <h2 id="worker">4. Phase B — Celery worker pipeline</h2>
+
+  <p><strong>Entry:</strong> <code>backend/app/workers/document_worker.py</code> → <code>process_document()</code></p>
+
+  <div class="step">
+    <div class="step-num">1</div>
+    <div class="step-body">
+      <h4>Status → PROCESSING</h4>
+      <p>Postgres <code>documents.status</code> updated via <code>_update_status()</code></p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">2</div>
+    <div class="step-body">
+      <h4>Download from MinIO</h4>
+      <p><code>_get_file_bytes()</code> reads <code>storage_path</code> from Postgres, downloads via <code>download_file()</code></p>
+      <p>Validates PDF magic bytes <code>%PDF</code> before parsing.</p>
+      <div class="observe"><strong>Observe:</strong> Worker log: <code>Downloaded file from MinIO: … (N bytes)</code></div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">3</div>
+    <div class="step-body">
+      <h4>Parse PDF → content blocks</h4>
+      <p><code>pipeline/normalizer.py</code> → <code>parsers/pdf_parser.py</code> (PyMuPDF)</p>
+      <p>Extracts text per page, headings (≥14pt), tables; OCR fallback for scanned pages (Tesseract).</p>
+      <p>Output: list of <code>ContentBlock</code> with page, section, text.</p>
+      <div class="observe"><strong>Observe:</strong> Worker log: <code>Pipeline: Parsing PDF</code> → <code>Normalized: N blocks, M characters</code></div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">4</div>
+    <div class="step-body">
+      <h4>Normalize / clean</h4>
+      <p>Strips empty blocks, truncates blocks &gt; 50,000 chars.</p>
+      <p><strong>File:</strong> <code>pipeline/normalizer.py</code></p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">5</div>
+    <div class="step-body">
+      <h4>Chunking</h4>
+      <p><strong>File:</strong> <code>pipeline/chunker.py</code> → <code>chunk_document()</code></p>
+      <table>
+        <tr><th>Parameter</th><th>Value</th></tr>
+        <tr><td>Max tokens per chunk</td><td><strong>800</strong></td></tr>
+        <tr><td>Overlap</td><td><strong>100</strong> tokens</td></tr>
+        <tr><td>Min chunk size</td><td><strong>50</strong> tokens (smaller discarded)</td></tr>
+        <tr><td>Tokenizer</td><td>tiktoken <code>cl100k_base</code></td></tr>
+        <tr><td>Chunk ID</td><td><code>{document_id}_chunk_{index}</code></td></tr>
+      </table>
+      <p>Metadata on each chunk: <code>page_number</code>, <code>section_title</code>, <code>chunk_index</code>, <code>token_count</code>, <code>file_name</code>.</p>
+      <div class="observe"><strong>Observe:</strong> Worker log: <code>Chunked 'file.pdf': X blocks → Y chunks [800 max tokens, 100 overlap]</code></div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">6</div>
+    <div class="step-body">
+      <h4>Embedding generation</h4>
+      <p><strong>File:</strong> <code>pipeline/embedder.py</code> → <code>embed_chunks_sync()</code></p>
+      <table>
+        <tr><th>Setting</th><th>Value</th></tr>
+        <tr><td>Model</td><td><code>text-embedding-3-small</code></td></tr>
+        <tr><td>Dimensions</td><td><strong>1536</strong></td></tr>
+        <tr><td>Batch size</td><td>100</td></tr>
+      </table>
+      <p>Each chunk text → one 1536-float vector via OpenAI-compatible gateway.</p>
+      <div class="observe"><strong>Observe:</strong> Worker log: <code>Pipeline: Embedding N chunks</code> · HTTP POST to <code>/v1/embeddings</code></div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">7</div>
+    <div class="step-body">
+      <h4>Store vectors in Qdrant</h4>
+      <p><strong>File:</strong> <code>db/vector_store.py</code> → <code>ensure_collection()</code> + <code>store_chunks()</code></p>
+      <table>
+        <tr><th>Setting</th><th>Value</th></tr>
+        <tr><td>Collection name</td><td><code>chunks</code></td></tr>
+        <tr><td>Distance metric</td><td>Cosine</td></tr>
+        <tr><td>Vector size</td><td>1536</td></tr>
+        <tr><td>Point ID</td><td>UUID5 from <code>chunk_id</code> (idempotent re-process)</td></tr>
+      </table>
+      <p><strong>Payload stored with each vector:</strong> chunk_id, document_id, file_name, chunk_text, page_number, section_title, chunk_index, token_count, source_type.</p>
+      <div class="observe"><strong>Observe:</strong> http://localhost:6333/dashboard → collection <code>chunks</code> → points count increases</div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">8</div>
+    <div class="step-body">
+      <h4>Save chunk text in Postgres</h4>
+      <p><code>_save_chunks_postgres()</code> inserts rows into <code>chunks</code> table (full text for audit/debug, not vectors).</p>
+      <pre><code>SELECT chunk_id, chunk_index, page_number, left(chunk_text, 80) AS preview
+FROM chunks WHERE document_id = 'doc_YOUR_ID' ORDER BY chunk_index;</code></pre>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">9</div>
+    <div class="step-body">
+      <h4>Neo4j graph update (GraphRAG, non-fatal if fails)</h4>
+      <p><strong>Files:</strong> <code>pipeline/entity_extractor.py</code>, <code>pipeline/graph_store.py</code>, <code>db/neo4j_client.py</code></p>
+      <p>Per chunk: LLM extracts entities, relationships, topics, decisions → MERGE into Neo4j.</p>
+      <table>
+        <tr><th>Node labels</th><th>Examples</th></tr>
+        <tr><td>Document, Chunk</td><td>One doc node; one chunk node per chunk</td></tr>
+        <tr><td>Person, Organization, Topic, Decision, Metric, Entity</td><td>Extracted by GPT-4o JSON</td></tr>
+        <tr><th>Relationships</th><th>MENTIONS, BELONGS_TO_TOPIC, RELATED_TO, SUPPORTED_BY</th></tr>
+      </table>
+      <div class="observe"><strong>Observe:</strong> http://localhost:7474 → <code>neo4j</code>/<code>dev_password</code></div>
+      <pre><code>MATCH (d:Document) RETURN d.file_name, d.document_id;
+MATCH (c:Chunk {document_id: 'doc_YOUR_ID'}) RETURN c LIMIT 10;
+MATCH (c:Chunk)-[r]->(e) RETURN c, r, e LIMIT 25;</code></pre>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">10</div>
+    <div class="step-body">
+      <h4>Status → COMPLETE</h4>
+      <p>Postgres: <code>status=COMPLETE</code>, <code>chunk_count=N</code>. UI polls every 5s and shows green badge.</p>
+      <div class="observe"><strong>Observe:</strong> Documents page shows <code>complete</code> with chunk count &gt; 0</div>
+    </div>
+  </div>
+
+  <div class="warn-box">
+    <strong>If chunk_count = 0:</strong> Check Celery logs. Common causes: MinIO download failed (missing <code>minio</code> package),
+    invalid PDF bytes, scanned PDF without OCR, or Qdrant client missing. Worker now fails loudly instead of fake-complete.
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <h2 id="storage">5. Phase C — Data map after ingestion</h2>
+
+  <table>
+    <tr><th>What</th><th>Where</th><th>How to inspect</th></tr>
+    <tr>
+      <td>Original PDF file</td>
+      <td>MinIO <code>ai-documents/documents/{doc_id}/original.pdf</code></td>
+      <td>MinIO console :9001</td>
+    </tr>
+    <tr>
+      <td>Doc metadata (status, path, chunk_count)</td>
+      <td>Postgres <code>documents</code></td>
+      <td>psql / UI Documents table</td>
+    </tr>
+    <tr>
+      <td>Chunk plain text + page/section</td>
+      <td>Postgres <code>chunks</code></td>
+      <td>SQL query above</td>
+    </tr>
+    <tr>
+      <td>Chunk embeddings (vectors)</td>
+      <td>Qdrant collection <code>chunks</code></td>
+      <td>Qdrant dashboard :6333</td>
+    </tr>
+    <tr>
+      <td>Entities & relationships</td>
+      <td>Neo4j graph</td>
+      <td>Neo4j Browser :7474</td>
+    </tr>
+    <tr>
+      <td>Processing job</td>
+      <td>Redis queue (transient)</td>
+      <td>Celery worker terminal</td>
+    </tr>
+  </table>
+
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <h2 id="query">6. Phase D — User query → answer</h2>
+
+  <p><strong>Entry:</strong> Chat UI http://localhost:4200/chat → <code>POST /api/chat</code></p>
+  <p><strong>Orchestrator:</strong> <code>backend/app/agents/workflow.py</code> → <code>run_agentic_workflow()</code></p>
+
+  <div class="flow">User types question
+       │
+       ▼
+┌──────────────────┐
+│ 1. Router Agent  │  Classify intent: doc_question | graph_question | general_chat | summary
+│ router_agent.py  │  Uses GPT-4o. Heuristic: resume/doc keywords → doc_question
+└────────┬─────────┘
+         │ (if not general_chat)
+         ▼
+┌──────────────────┐
+│ 2. Query Rewrite │  Expand/clarify query using last 4 chat turns
+│ rewrite_agent.py │
+└────────┬─────────┘
+         ▼
+┌──────────────────┐
+│ 3. Retriever     │  embed_query() → same model as ingestion (1536-d)
+│ retriever_agent  │  Qdrant cosine search, top_k=5, score_threshold=0.25
+│ retriever.py     │  Returns RetrievedChunk[] with similarity_score + chunk_text
+└────────┬─────────┘
+         │ (graph_question also runs Cypher agent on Neo4j)
+         ▼
+┌──────────────────┐
+│ 4. Context       │  Merge chunks (+ optional graph results) into numbered context
+│ Builder          │  Max ~15,000 chars. Format: [1] Source: file.pdf, Page 3…
+│ context_builder  │
+└────────┬─────────┘
+         ▼
+┌──────────────────┐
+│ 5. Answer Agent  │  GPT-4o with RAG_SYSTEM_PROMPT + context + question
+│ answer_agent.py  │  Must cite [1], [2]… Builds SourceCitation list
+│ rag.py           │
+└────────┬─────────┘
+         ▼
+┌──────────────────┐
+│ 6. Critic Agent  │  Validates answer is grounded in context (no hallucination)
+│ critic_agent.py  │  Up to 3 attempts; rejects if not grounded
+└────────┬─────────┘
+         ▼
+┌──────────────────┐
+│ 7. Memory Agent  │  Save user + assistant messages to Postgres sessions/messages
+│ memory_agent.py  │
+└────────┬─────────┘
+         ▼
+   ChatResponse: { answer, citations[], debug{} }</div>
+
+  <h3>What the LLM actually receives (RAG path)</h3>
+  <pre><code>System: You are an enterprise AI assistant… Answer ONLY from context. Cite [1], [2]…
+
+[Last 6 conversation messages]
+
+User:
+Context from documents:
+
+[1] Source: Resume_BhanuTeja_DS.pdf, Page 1, Section: Apprentice Leader
+&lt;chunk text ~4000 chars&gt;
+
+[2] Source: Resume_BhanuTeja_DS.pdf, Page 2…
+&lt;chunk text&gt;
+
+---
+Question: What role and experience does Bhanu Teja have?
+Please answer based on the context above and cite your sources.</code></pre>
+
+  <h3>Retrieval details</h3>
+  <table>
+    <tr><th>Parameter</th><th>Value</th><th>File</th></tr>
+    <tr><td>top_k</td><td>5</td><td><code>db/retriever.py</code></td></tr>
+    <tr><td>score_threshold</td><td>0.25 (cosine)</td><td><code>db/retriever.py</code></td></tr>
+    <tr><td>Query embedding model</td><td>text-embedding-3-small</td><td><code>pipeline/embedder.py</code></td></tr>
+    <tr><td>Retrieval cache TTL</td><td>300s in Redis</td><td><code>services/cache_service.py</code></td></tr>
+    <tr><td>Chat model</td><td>gpt-4o</td><td><code>core/config.py</code></td></tr>
+  </table>
+
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <h2 id="debug">7. How to observe everything</h2>
+
+  <h3>During upload (watch in parallel)</h3>
+  <table>
+    <tr><th>Step</th><th>Where to look</th></tr>
+    <tr><td>Upload request</td><td>Browser DevTools → Network → POST upload → 202 + document_id</td></tr>
+    <tr><td>MinIO file</td><td>http://localhost:9001 → ai-documents bucket</td></tr>
+    <tr><td>Postgres status</td><td>psql: <code>SELECT status, chunk_count FROM documents WHERE document_id='…';</code></td></tr>
+    <tr><td>Parse/chunk/embed</td><td>Celery worker terminal (follow log lines)</td></tr>
+    <tr><td>Vectors</td><td>http://localhost:6333/dashboard → chunks collection</td></tr>
+    <tr><td>Graph</td><td>http://localhost:7474 → Cypher queries</td></tr>
+    <tr><td>UI status</td><td>http://localhost:4200/documents → badge turns complete</td></tr>
+  </table>
+
+  <h3>During chat (Debug panel)</h3>
+  <ol style="margin-left:20px;color:#c8d0de;">
+    <li>Open http://localhost:4200/chat → hard refresh (Ctrl+Shift+R)</li>
+    <li>Click <strong>Debug</strong> (flask icon, top-right of chat area)</li>
+    <li>Ask a document-specific question</li>
+    <li>After answer, debug panel shows:</li>
+  </ol>
+  <table>
+    <tr><th>Debug field</th><th>Pipeline step</th></tr>
+    <tr><td><code>intent</code></td><td>Router — should be <code>doc_question</code> for resume questions</td></tr>
+    <tr><td><code>retrieved_chunks_count</code></td><td>Retriever — should be &gt; 0</td></tr>
+    <tr><td><code>similarity_scores</code></td><td>Qdrant cosine scores per chunk</td></tr>
+    <tr><td><code>token_usage</code> / <code>cost_usd</code> / <code>latency_ms</code></td><td>LLM call metrics</td></tr>
+    <tr><td>Sources under answer</td><td>Citations from Answer agent (file, page, excerpt)</td></tr>
+  </table>
+
+  <h3>API test (same pipeline, no UI)</h3>
+  <p><strong>Do NOT</strong> open <code>http://localhost:8000/api/chat</code> in browser (GET → Method Not Allowed).</p>
+  <p>Use Swagger: http://localhost:8000/docs → POST /api/chat → Try it out:</p>
+  <pre><code>{
+  "user_id": "demo",
+  "session_id": "demo-e2e",
+  "message": "What role and experience does Bhanu Teja have according to the resume?",
+  "stream": false
+}</code></pre>
+  <p>Response fields: <code>answer</code>, <code>citations[]</code>, <code>debug.intent</code>, <code>debug.retrieved_chunks_count</code>, <code>debug.similarity_scores</code>.</p>
+
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <h2 id="params">8. Key parameters reference</h2>
+
+  <table>
+    <tr><th>Category</th><th>Parameter</th><th>Value</th></tr>
+    <tr><td>Chunking</td><td>max / overlap / min tokens</td><td>800 / 100 / 50</td></tr>
+    <tr><td>Embedding</td><td>model / dimensions</td><td>text-embedding-3-small / 1536</td></tr>
+    <tr><td>Qdrant</td><td>collection / distance</td><td>chunks / Cosine</td></tr>
+    <tr><td>Retrieval</td><td>top_k / threshold</td><td>5 / 0.25</td></tr>
+    <tr><td>LLM</td><td>chat model</td><td>gpt-4o</td></tr>
+    <tr><td>Context</td><td>max chars</td><td>~12,000–15,000</td></tr>
+    <tr><td>Critic</td><td>max retries</td><td>2 (3 total attempts)</td></tr>
+    <tr><td>Upload</td><td>max file size</td><td>100 MB</td></tr>
+    <tr><td>Celery</td><td>queue / retries</td><td>document_processing / 3</td></tr>
+  </table>
+
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <h2 id="commands">9. Copy-paste commands cheat sheet</h2>
+
+  <h3>Stack health</h3>
+  <pre><code>curl http://localhost:8000/health
+redis-cli ping
+PGPASSWORD=dev_password psql -h localhost -p 5433 -U ai_user -d ai_assistant -c "SELECT 1;"
+curl -s http://localhost:6333/collections | jq</code></pre>
+
+  <h3>After upload — verify all stores</h3>
+  <pre><code># Postgres document + chunks
+PGPASSWORD=dev_password psql -h localhost -p 5433 -U ai_user -d ai_assistant -c \
+  "SELECT document_id, status, chunk_count, storage_path FROM documents ORDER BY created_at DESC LIMIT 3;"
+
+PGPASSWORD=dev_password psql -h localhost -p 5433 -U ai_user -d ai_assistant -c \
+  "SELECT chunk_id, chunk_index, page_number FROM chunks WHERE document_id='doc_YOUR_ID';"
+
+# Qdrant point count
+curl -s http://localhost:6333/collections/chunks | jq '.result.points_count'
+
+# Chat API
+curl -s -X POST http://localhost:8000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"user_id":"demo","session_id":"e2e","message":"Summarize the resume skills","stream":false}' | jq</code></pre>
+
+  <h3>Source code map (quick)</h3>
+  <table>
+    <tr><th>Stage</th><th>Primary file</th></tr>
+    <tr><td>Upload API</td><td><code>backend/app/api/documents.py</code></td></tr>
+    <tr><td>MinIO</td><td><code>backend/app/services/storage_service.py</code></td></tr>
+    <tr><td>Celery worker</td><td><code>backend/app/workers/document_worker.py</code></td></tr>
+    <tr><td>PDF parse</td><td><code>backend/app/parsers/pdf_parser.py</code></td></tr>
+    <tr><td>Normalize</td><td><code>backend/app/pipeline/normalizer.py</code></td></tr>
+    <tr><td>Chunk</td><td><code>backend/app/pipeline/chunker.py</code></td></tr>
+    <tr><td>Embed</td><td><code>backend/app/pipeline/embedder.py</code></td></tr>
+    <tr><td>Qdrant</td><td><code>backend/app/db/vector_store.py</code></td></tr>
+    <tr><td>Retrieve</td><td><code>backend/app/db/retriever.py</code></td></tr>
+    <tr><td>RAG prompt</td><td><code>backend/app/pipeline/rag.py</code></td></tr>
+    <tr><td>Agents</td><td><code>backend/app/agents/workflow.py</code> + agents/*</td></tr>
+    <tr><td>Neo4j graph</td><td><code>backend/app/pipeline/graph_store.py</code></td></tr>
+    <tr><td>Chat API</td><td><code>backend/app/api/chat.py</code></td></tr>
+    <tr><td>Frontend upload</td><td><code>frontend/src/app/documents/documents-page/</code></td></tr>
+    <tr><td>Frontend chat</td><td><code>frontend/src/app/chat/chat-page/</code></td></tr>
+  </table>
+
+  <footer>
+    Enterprise AI Chat Assistant · End-to-end pipeline guide ·
+    Open this file in any browser: <code>docs/architecture/end-to-end-pipeline-technical.html</code>
+  </footer>
+
+</div>
+</body>
+</html>

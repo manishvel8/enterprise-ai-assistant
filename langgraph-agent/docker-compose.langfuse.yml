@@ -1,0 +1,187 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# docker-compose.langfuse.yml  —  Self-hosted Langfuse v3 (LLM Observability)
+#
+# SETUP (use hyphenated docker-compose — same as docker-compose.dev.yml):
+#   docker-compose -f docker-compose.langfuse.yml up -d
+#   Open http://localhost:3000 → Sign up → Create project → API Keys
+#   Paste keys into langgraph-agent/.env then restart uvicorn
+#
+# CORPORATE DOCKER NOTE:
+#   minio/minio:latest often fails with "pull access denied".
+#   We pin to the same tag as docker-compose.dev.yml (already cached locally).
+#
+# TEARDOWN:
+#   docker-compose -f docker-compose.langfuse.yml down -v
+# ─────────────────────────────────────────────────────────────────────────────
+
+networks:
+  langfuse_network:
+    driver: bridge
+
+volumes:
+  langfuse_pg_data:
+  langfuse_ch_data:
+  langfuse_redis_data:
+  langfuse_minio_data:
+
+x-langfuse-env: &langfuse-env
+  DATABASE_URL: "postgresql://langfuse:langfuse_secret@langfuse-db:5432/langfuse"
+  CLICKHOUSE_MIGRATION_URL: "clickhouse://langfuse-ch:9000"
+  CLICKHOUSE_URL: "http://langfuse-ch:8123"
+  CLICKHOUSE_USER: langfuse
+  CLICKHOUSE_PASSWORD: langfuse_ch_secret
+  CLICKHOUSE_CLUSTER_ENABLED: "false"
+  REDIS_HOST: langfuse-redis
+  REDIS_PORT: "6379"
+  REDIS_AUTH: langfuse_redis_secret
+  # Required by Langfuse v3+ — event + media uploads to MinIO
+  LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+  LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: langfuse_minio_root
+  LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: langfuse_minio_secret
+  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: "http://langfuse-minio:9000"
+  LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+  LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+  LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: langfuse_minio_root
+  LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: langfuse_minio_secret
+  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: "http://langfuse-minio:9000"
+  LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+  NEXTAUTH_SECRET: "your_nextauth_secret_change_this_in_prod"
+  SALT: "your_salt_change_this_in_prod"
+  ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+  TELEMETRY_ENABLED: "false"
+
+services:
+
+  langfuse-db:
+    image: postgres:16-alpine
+    container_name: langfuse_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: langfuse
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse_secret
+    volumes:
+      - langfuse_pg_data:/var/lib/postgresql/data
+    networks:
+      - langfuse_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  langfuse-ch:
+    image: clickhouse/clickhouse-server:24.3-alpine
+    container_name: langfuse_clickhouse
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: langfuse_ch_secret
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    volumes:
+      - langfuse_ch_data:/var/lib/clickhouse
+    networks:
+      - langfuse_network
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      # Use 127.0.0.1 — wget resolves "localhost" to ::1 and fails when IPv6 is disabled
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  langfuse-redis:
+    image: redis:7-alpine
+    container_name: langfuse_redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --requirepass langfuse_redis_secret
+      --maxmemory-policy noeviction
+    volumes:
+      - langfuse_redis_data:/data
+    networks:
+      - langfuse_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "langfuse_redis_secret", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Pin to cached tag (same as docker-compose.dev.yml). :latest is blocked on
+  # corporate networks that deny anonymous Docker Hub access to minio/minio.
+  # Pre-create /data/langfuse so the S3 bucket exists on first boot.
+  langfuse-minio:
+    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
+    container_name: langfuse_minio
+    restart: unless-stopped
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: langfuse_minio_root
+      MINIO_ROOT_PASSWORD: langfuse_minio_secret
+    volumes:
+      - langfuse_minio_data:/data
+    networks:
+      - langfuse_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
+    container_name: langfuse_worker
+    restart: unless-stopped
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+      langfuse-ch:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+      langfuse-minio:
+        condition: service_healthy
+    environment:
+      <<: *langfuse-env
+    networks:
+      - langfuse_network
+
+  langfuse-server:
+    image: langfuse/langfuse:3
+    container_name: langfuse_server
+    restart: unless-stopped
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+      langfuse-ch:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+      langfuse-minio:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      <<: *langfuse-env
+      NEXTAUTH_URL: "http://localhost:3000"
+      AUTH_DISABLE_SIGNUP: "false"
+    networks:
+      - langfuse_network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/public/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 40s

@@ -1,0 +1,366 @@
+---
+# .github/workflows/ci.yml — Continuous Integration Pipeline
+#
+# WHAT IS CI?
+#   CI (Continuous Integration) = automated checks that run on every code push.
+#   Goal: catch bugs BEFORE they reach main branch or production.
+#
+# THE JOURNEY:
+#   Developer writes code
+#       ↓
+#   git commit && git push
+#       ↓
+#   GitHub detects the push and triggers this workflow
+#       ↓
+#   STAGE 1: Lint (fast, ~1min) — catches style/syntax errors
+#       ↓
+#   STAGE 2: Test (medium, ~3min) — catches logic errors
+#       ↓
+#   STAGE 3: Security scan (medium, ~2min) — catches vulnerabilities
+#       ↓
+#   STAGE 4: Docker build (slow, ~5min) — verifies it can be containerized
+#       ↓
+#   STAGE 5: Push image to registry — ready for CD pipeline
+#
+# TRIGGERS:
+#   - Any push to main or develop branch
+#   - Any pull request targeting main
+#
+# GITHUB SECRETS NEEDED (Settings → Secrets and Variables → Actions):
+#   DOCKER_USERNAME    — Docker Hub username (or registry username)
+#   DOCKER_PASSWORD    — Docker Hub access token (never the actual password)
+#
+# HOW TO READ THE OUTPUT:
+#   Green ✓ = step passed
+#   Red  ✗ = step failed (shows the log of what went wrong)
+#   Yellow ⚠ = warning (doesn't fail the build)
+
+name: CI — Lint, Test, Build, Push
+
+on:
+  push:
+    branches: [main, develop, "feature/**"]
+  pull_request:
+    branches: [main, develop]
+
+# Cancel redundant runs: if you push twice quickly, cancel the first run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Image names for Docker Hub (change to your registry)
+  BACKEND_IMAGE: ghcr.io/${{ github.repository_owner }}/ai-backend
+  LANGGRAPH_IMAGE: ghcr.io/${{ github.repository_owner }}/ai-langgraph-agent
+  FRONTEND_IMAGE: ghcr.io/${{ github.repository_owner }}/ai-frontend
+  WORKER_IMAGE: ghcr.io/${{ github.repository_owner }}/ai-worker
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "20"
+
+jobs:
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 1: Python Linting (ruff — fast, replaces pylint/flake8)
+  # ──────────────────────────────────────────────────────────────────────────
+  lint-python:
+    name: Lint Python (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # Cache pip downloads to speed up repeated runs.
+      # Key includes requirements.txt hash — cache invalidated when deps change.
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('**/requirements.txt') }}
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Lint backend (ruff)
+        # ruff check: finds syntax errors, unused imports, undefined names
+        # ruff format: checks code formatting (like black)
+        # --output-format=github: annotations appear inline in PR diff
+        run: |
+          echo "=== Linting backend ==="
+          cd backend
+          ruff check app/ --output-format=github || true
+          ruff format app/ --check || true
+
+      - name: Lint LangGraph agent (ruff)
+        run: |
+          echo "=== Linting langgraph-agent ==="
+          cd langgraph-agent
+          ruff check app/ --output-format=github || true
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 2: Frontend Linting (ESLint)
+  # ──────────────────────────────────────────────────────────────────────────
+  lint-frontend:
+    name: Lint Frontend (ESLint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: cd frontend && npm ci
+
+      - name: Run ESLint
+        run: cd frontend && npx ng lint || true
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 3: Python Tests
+  # Tests run in parallel: backend tests and langgraph tests simultaneously.
+  # ──────────────────────────────────────────────────────────────────────────
+  test-backend:
+    name: Test Backend (pytest)
+    runs-on: ubuntu-latest
+    needs: lint-python     # only run tests if lint passes
+
+    # Service containers: provide real services for integration tests.
+    # These start BEFORE the test job and are accessible by container name.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: test_ai_assistant
+          POSTGRES_USER: ai_user
+          POSTGRES_PASSWORD: test_password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ai_user"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-backend-${{ runner.os }}-${{ hashFiles('backend/requirements.txt') }}
+
+      - name: Install backend dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov httpx
+
+      - name: Run backend tests
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_DB: test_ai_assistant
+          POSTGRES_USER: ai_user
+          POSTGRES_PASSWORD: test_password
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          OPENAI_API_KEY: "sk-test-fake-key-for-ci"
+          SECRET_KEY: "ci-test-secret-key-not-for-production"
+        run: |
+          cd backend
+          python -m pytest tests/ \
+            --tb=short \
+            --cov=app \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            -v \
+            2>&1
+
+      - name: Upload coverage report
+        # Upload coverage data for Codecov (optional)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage.xml
+
+  test-langgraph:
+    name: Test LangGraph Agent (pytest)
+    runs-on: ubuntu-latest
+    needs: lint-python
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-lg-${{ runner.os }}-${{ hashFiles('langgraph-agent/requirements.txt') }}
+
+      - name: Install langgraph dependencies
+        run: |
+          cd langgraph-agent
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov httpx
+
+      - name: Run langgraph tests
+        env:
+          OPENAI_API_KEY: "sk-test-fake-key-for-ci"
+          LANGFUSE_ENABLED: "false"
+          CONVERSATION_DB_HOST: "localhost"
+          CONVERSATION_DB_PORT: "5432"
+        run: |
+          cd langgraph-agent
+          python -m pytest tests/ \
+            --tb=short \
+            -v \
+            2>&1
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 4: Docker Build (verify images can be built)
+  # ──────────────────────────────────────────────────────────────────────────
+  docker-build:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: [test-backend, test-langgraph]
+    # Only build on push to main/develop (not on every PR commit — saves time)
+    if: github.event_name == 'push'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Set up Docker BuildKit for faster multi-stage builds
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Login to GitHub Container Registry
+      - name: Log in to container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}   # GITHUB_TOKEN is auto-provided
+
+      # Build backend and push to registry
+      - name: Build and push backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: ${{ github.ref == 'refs/heads/main' }}   # only push on main
+          tags: |
+            ${{ env.BACKEND_IMAGE }}:latest
+            ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha   # GitHub Actions cache (speeds up builds)
+          cache-to: type=gha,mode=max
+
+      # Build LangGraph agent image
+      - name: Build and push LangGraph agent image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./langgraph-agent
+          push: ${{ github.ref == 'refs/heads/main' }}
+          tags: |
+            ${{ env.LANGGRAPH_IMAGE }}:latest
+            ${{ env.LANGGRAPH_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Build frontend image
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: ${{ github.ref == 'refs/heads/main' }}
+          tags: |
+            ${{ env.FRONTEND_IMAGE }}:latest
+            ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 5: Container Security Scan (Trivy)
+  # ──────────────────────────────────────────────────────────────────────────
+  security-scan:
+    name: Trivy Security Scan
+    runs-on: ubuntu-latest
+    needs: docker-build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Build the backend image locally (not pushed yet) for scanning
+      - name: Build backend image for scanning
+        run: docker build -t scan-backend:ci ./backend
+
+      - name: Scan backend image with Trivy
+        # Trivy scans the image for known CVEs in OS packages and Python deps.
+        # EXIT_CODE 1: fail if CRITICAL vulnerabilities found (block deployment)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "scan-backend:ci"
+          format: "sarif"            # GitHub Security tab format
+          output: "trivy-backend.sarif"
+          severity: "CRITICAL,HIGH"
+          exit-code: "0"             # don't block CI on vulnerabilities (set to 1 for strict mode)
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: "trivy-backend.sarif"
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 6: CI Summary (runs last, reports overall status)
+  # ──────────────────────────────────────────────────────────────────────────
+  ci-summary:
+    name: CI Summary
+    runs-on: ubuntu-latest
+    needs: [lint-python, lint-frontend, test-backend, test-langgraph]
+    if: always()
+
+    steps:
+      - name: Report CI status
+        run: |
+          echo "====================================="
+          echo "CI Pipeline Summary"
+          echo "====================================="
+          echo "Branch:  ${{ github.ref_name }}"
+          echo "Commit:  ${{ github.sha }}"
+          echo "Author:  ${{ github.actor }}"
+          echo "Trigger: ${{ github.event_name }}"
+          echo "====================================="
+          echo "Lint Python:    ${{ needs.lint-python.result }}"
+          echo "Lint Frontend:  ${{ needs.lint-frontend.result }}"
+          echo "Test Backend:   ${{ needs.test-backend.result }}"
+          echo "Test LangGraph: ${{ needs.test-langgraph.result }}"
+          echo "====================================="
+
+          # Fail the summary if any critical job failed
+          if [ "${{ needs.test-backend.result }}" = "failure" ] || \
+             [ "${{ needs.test-langgraph.result }}" = "failure" ]; then
+            echo "❌ PIPELINE FAILED — Tests failed"
+            exit 1
+          else
+            echo "✅ PIPELINE PASSED"
+          fi

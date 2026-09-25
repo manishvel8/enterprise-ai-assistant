@@ -95,12 +95,34 @@ logger = get_task_logger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_async(coroutine):
-    """Run an async coroutine from synchronous Celery task code."""
+    """
+    Run an async coroutine from synchronous Celery task code.
+
+    Disposes the SQLAlchemy async engine after each call so the next
+    run_async() does not reuse connections bound to a closed event loop.
+    """
     loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     try:
         return loop.run_until_complete(coroutine)
     finally:
-        loop.close()
+        try:
+            from app.db import postgres as pg
+
+            async def _dispose():
+                if pg._engine is not None:
+                    await pg._engine.dispose()
+                    pg._engine = None
+                    pg._session_factory = None
+
+            loop.run_until_complete(_dispose())
+        except Exception:
+            pass
+        try:
+            loop.close()
+        except Exception:
+            pass
+        asyncio.set_event_loop(None)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -157,15 +179,32 @@ def process_document(
         run_async(_update_status(document_id, "processing"))
         logger.info(f"Status updated to PROCESSING: {document_id}")
 
-        # Step 2: Download file from MinIO
-        from app.services.storage_service import download_file
+        # Step 2: Download file from MinIO (use stored path from Postgres)
         file_bytes = _get_file_bytes(document_id, file_name)
 
         if file_bytes is None:
-            raise ValueError(f"Could not retrieve file bytes for {document_id}")
+            raise ValueError(
+                f"Could not retrieve file bytes for {document_id}. "
+                "Check MinIO is running and the object was uploaded."
+            )
+
+        # Guard: never feed placeholder/non-PDF bytes into the PDF parser
+        if file_type == "pdf" and not file_bytes.startswith(b"%PDF"):
+            raise ValueError(
+                f"Downloaded bytes for {document_id} are not a valid PDF "
+                f"(got {len(file_bytes)} bytes, magic={file_bytes[:8]!r}). "
+                "MinIO download likely failed or returned the wrong object."
+            )
 
         # Step 3-8: Run ingestion pipeline
         chunk_count = _run_ingestion_pipeline(document_id, file_name, file_type, file_bytes)
+
+        if chunk_count == 0:
+            raise ValueError(
+                "No searchable chunks produced. "
+                "For scanned/image PDFs install tesseract OCR, or upload a text PDF. "
+                "Do not upload government ID cards for demos."
+            )
 
         # Step 9-10: Mark as COMPLETE
         run_async(_update_status(document_id, "complete", chunk_count=chunk_count))
@@ -193,21 +232,55 @@ def process_document(
 
 def _get_file_bytes(document_id: str, file_name: str) -> Optional[bytes]:
     """
-    Download file from MinIO, or return placeholder bytes for development.
+    Download file from MinIO using the storage_path saved in PostgreSQL.
 
-    When MinIO is not configured (no minio package), we return a placeholder
-    so the rest of the pipeline can still be tested.
+    Falls back to the stable key documents/{document_id}/original.{ext}
+    then the legacy key documents/{document_id}/{file_name}.
     """
     from app.services.storage_service import download_file
-    storage_path = f"documents/{document_id}/{file_name}"
-    file_bytes = download_file(storage_path)
 
-    if file_bytes is None:
-        # Development fallback — MinIO not available
-        logger.warning(f"MinIO not available. Using placeholder bytes for {document_id}")
-        return b"[PLACEHOLDER DOCUMENT CONTENT - MinIO not configured]"
+    storage_path = run_async(_lookup_storage_path(document_id))
+    candidates = []
+    if storage_path:
+        candidates.append(storage_path)
 
-    return file_bytes
+    ext = ""
+    if "." in file_name:
+        ext = "." + file_name.rsplit(".", 1)[-1].lower()
+    candidates.append(f"documents/{document_id}/original{ext}")
+    candidates.append(f"documents/{document_id}/{file_name}")
+
+    seen = set()
+    for path in candidates:
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        file_bytes = download_file(path)
+        if file_bytes:
+            logger.info(f"Loaded {len(file_bytes)} bytes from {path}")
+            return file_bytes
+
+    logger.error(f"All MinIO download attempts failed for {document_id}")
+    return None
+
+
+async def _lookup_storage_path(document_id: str) -> Optional[str]:
+    """Read storage_path from PostgreSQL for this document."""
+    try:
+        from app.db.postgres import get_session_factory, DocumentModel
+        from sqlalchemy import select
+
+        session_factory = get_session_factory()
+        async with session_factory() as db:
+            result = await db.execute(
+                select(DocumentModel.storage_path).where(
+                    DocumentModel.document_id == document_id
+                )
+            )
+            return result.scalar_one_or_none()
+    except Exception as e:
+        logger.warning(f"Could not lookup storage_path: {e}")
+        return None
 
 
 def _run_ingestion_pipeline(
@@ -219,34 +292,87 @@ def _run_ingestion_pipeline(
     """
     Run the full ingestion pipeline and return the number of chunks created.
 
-    Milestone 9: Stub — logs each step and returns 0.
-    Milestone 10+: Each step is replaced with real implementation.
+    Delegates to pipeline/ingestion.py which orchestrates:
+    parse → normalize → chunk → embed → store (Qdrant + PostgreSQL)
     """
-    logger.info(f"Pipeline step 1/6: Parsing {file_type.upper()} file: {file_name}")
-    # Milestone 10: raw_content = parse(file_bytes, file_type)
-    raw_content = {"text": "[Document content - parser not yet implemented]", "page_count": 1}
+    from app.pipeline.normalizer import normalize
+    from app.pipeline.chunker import chunk_document
+    from app.pipeline.embedder import embed_chunks_sync
+    from app.db.vector_store import ensure_collection, store_chunks
+    from app.db.neo4j_client import create_document_node, setup_schema
+    from app.pipeline.entity_extractor import extract_entities_sync
+    from app.pipeline.graph_store import store_chunk_graph
 
-    logger.info(f"Pipeline step 2/6: Normalizing to content_blocks schema")
-    # Milestone 11: normalized = normalize(raw_content, document_id, file_name, file_type)
-    normalized = {"document_id": document_id, "content_blocks": [{"text": raw_content["text"]}]}
+    logger.info(f"Pipeline: Parsing {file_type.upper()} — {file_name}")
+    normalized_doc = normalize(file_bytes, document_id, file_name, file_type)
 
-    logger.info(f"Pipeline step 3/6: Chunking with metadata")
-    # Milestone 12: chunks = chunk(normalized)
-    chunks = [{"chunk_id": f"{document_id}_chunk_0", "text": raw_content["text"]}]
+    logger.info(f"Pipeline: Chunking {len(normalized_doc.content_blocks)} content blocks")
+    chunks = chunk_document(normalized_doc)
 
-    logger.info(f"Pipeline step 4/6: Generating embeddings")
-    # Milestone 13: embedded_chunks = embed(chunks)
-    # (calls OpenAI text-embedding-3-small for each chunk)
+    if not chunks:
+        logger.warning(f"No chunks produced for {document_id}")
+        return 0
 
-    logger.info(f"Pipeline step 5/6: Storing vectors in Qdrant")
-    # Milestone 14: store_vectors(embedded_chunks)
+    logger.info(f"Pipeline: Embedding {len(chunks)} chunks")
+    embeddings = embed_chunks_sync(chunks)
 
-    logger.info(f"Pipeline step 6/6: Extracting and storing graph entities")
-    # Milestone 18-19: extract_and_store_entities(chunks)
+    logger.info(f"Pipeline: Storing vectors in Qdrant")
+    ensure_collection()
+    stored = store_chunks(chunks, embeddings)
+    if stored == 0:
+        raise RuntimeError(
+            "Failed to store vectors in Qdrant (0 points written). "
+            "Install qdrant-client and ensure Qdrant is running on :6333."
+        )
+    logger.info(f"Pipeline: Stored {stored} vectors in Qdrant")
+
+    logger.info(f"Pipeline: Saving chunk metadata to PostgreSQL")
+    run_async(_save_chunks_postgres(document_id, chunks))
+
+    # GraphRAG prep: Document + Chunk nodes, then LLM entity extraction → Neo4j
+    # Non-fatal if Neo4j or OpenAI is unavailable (vector RAG still works).
+    try:
+        setup_schema()
+        create_document_node(document_id, file_name, file_type)
+        graph_stored = 0
+        for chunk in chunks:
+            entities_data = extract_entities_sync(chunk)
+            if store_chunk_graph(chunk, entities_data):
+                graph_stored += 1
+        logger.info(
+            f"Pipeline: Neo4j graph update for {graph_stored}/{len(chunks)} chunks"
+        )
+    except Exception as e:
+        logger.warning(f"Neo4j entity graph step skipped (non-fatal): {e}")
 
     chunk_count = len(chunks)
     logger.info(f"Pipeline complete: {chunk_count} chunks for document {document_id}")
     return chunk_count
+
+
+async def _save_chunks_postgres(document_id: str, chunks) -> None:
+    """Persist chunk metadata to PostgreSQL."""
+    try:
+        from app.db.postgres import get_session_factory, ChunkModel
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            for chunk in chunks:
+                record = ChunkModel(
+                    chunk_id=chunk.chunk_id,
+                    document_id=document_id,
+                    file_name=chunk.file_name,
+                    source_type=chunk.source_type,
+                    chunk_index=chunk.metadata.get("chunk_index", 0),
+                    chunk_text=chunk.chunk_text,
+                    page_number=chunk.page_number,
+                    slide_number=chunk.slide_number,
+                    sheet_name=chunk.sheet_name,
+                    section_title=chunk.section_title,
+                )
+                session.add(record)
+            await session.commit()
+    except Exception as e:
+        logger.warning(f"PostgreSQL chunk save failed (non-fatal): {e}")
 
 
 async def _update_status(
@@ -290,9 +416,17 @@ def delete_document_data(document_id: str) -> dict:
     """
     logger.info(f"Deleting all data for document: {document_id}")
 
-    # TODO Milestone 14: Delete from Qdrant
-    # TODO Milestone 19: Delete from Neo4j
-    # TODO Milestone 7: Delete from MinIO (already done in API for now)
+    try:
+        from app.db.vector_store import delete_document_vectors
+        delete_document_vectors(document_id)
+    except Exception as e:
+        logger.warning(f"Qdrant cleanup failed: {e}")
+
+    try:
+        from app.db.neo4j_client import delete_document_graph
+        delete_document_graph(document_id)
+    except Exception as e:
+        logger.warning(f"Neo4j cleanup failed: {e}")
 
     return {"status": "deleted", "document_id": document_id}
 

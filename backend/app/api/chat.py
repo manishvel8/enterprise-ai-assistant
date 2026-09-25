@@ -23,6 +23,7 @@ from app.models.chat import (
     ChatHistoryItem,
     MessageRole,
     DebugInfo,
+    SourceCitation,
 )
 from app.core.config import settings
 
@@ -76,59 +77,32 @@ async def chat(request: ChatRequest) -> ChatResponse:
     """
     Main chat handler.
 
-    Flow (Milestone 4):
-    1. Load session history
-    2. Add user message to history
-    3. Convert history to OpenAI messages format
-    4. Call OpenAI GPT-4o
-    5. Save assistant response to history
-    6. Return ChatResponse with answer + debug info
-
-    Flow (Milestone 22+):
-    Replace step 3-4 with the full agentic workflow graph.
+    Milestone 22+: Full 9-agent agentic workflow.
+    Fallback: Direct OpenAI call if workflow fails.
     """
-    from datetime import datetime, timezone
-    start_time = time.time()
+    from fastapi import HTTPException
+    from app.core.rate_limiter import check_rate_limit
 
-    history = _get_history(request.session_id)
+    allowed, remaining = check_rate_limit(request.user_id or "anonymous", "chat")
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded. Try again in 60 seconds.",
+            headers={"Retry-After": "60"},
+        )
 
-    # Save user message to history
-    timestamp = datetime.now(timezone.utc).isoformat()
-    history.append({"role": "user", "content": request.message, "timestamp": timestamp})
-
-    # --- Try OpenAI, fall back to echo if not configured ---
     openai_available = bool(settings.openai_api_key and settings.openai_api_key != "sk-your-openai-key-here")
 
     if openai_available:
-        answer, token_usage, cost_usd = await _call_openai(history)
-    else:
-        answer = _fallback_response(request.message)
-        token_usage = None
-        cost_usd = None
+        try:
+            return await _run_agentic_chat(request)
+        except Exception as e:
+            logger.error(f"Agentic workflow failed: {e}. Falling back to direct OpenAI.")
+            # Fall through to direct OpenAI
+            pass
 
-    # Save assistant response to history
-    history.append({
-        "role": "assistant",
-        "content": answer,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    })
-
-    latency_ms = (time.time() - start_time) * 1000
-
-    return ChatResponse(
-        session_id=request.session_id,
-        answer=answer,
-        citations=[],
-        debug=DebugInfo(
-            intent="general_chat",
-            retrieved_chunks_count=0,
-            similarity_scores=[],
-            cypher_results_count=0,
-            token_usage=token_usage,
-            cost_usd=cost_usd,
-            latency_ms=round(latency_ms, 2),
-        ) if settings.enable_debug_panel else None,
-    )
+    # Fallback: direct OpenAI or echo
+    return await _direct_chat_fallback(request)
 
 
 async def _call_openai(history: List[Dict]) -> tuple:
@@ -194,6 +168,91 @@ async def _call_openai(history: List[Dict]) -> tuple:
         )
 
 
+async def _run_agentic_chat(request: ChatRequest) -> ChatResponse:
+    """Run the full 9-agent workflow and return a ChatResponse."""
+    from app.agents.workflow import run_agentic_workflow
+
+    state = await run_agentic_workflow(
+        user_id=request.user_id or "anonymous",
+        session_id=request.session_id,
+        user_query=request.message,
+        document_ids=request.document_ids if request.document_ids else None,
+    )
+
+    answer = state.get("validated_answer") or state.get("draft_answer", "")
+    citations = [
+        SourceCitation(
+            chunk_id=c["chunk_id"],
+            document_id=c["document_id"],
+            file_name=c["file_name"],
+            page_number=c.get("page_number"),
+            section_title=c.get("section_title"),
+            excerpt=c.get("excerpt", ""),
+        )
+        for c in state.get("citations", [])
+        if isinstance(c, dict)
+    ]
+
+    return ChatResponse(
+        session_id=request.session_id,
+        answer=answer,
+        citations=citations,
+        debug=DebugInfo(
+            intent=state.get("intent", "unknown"),
+            retrieved_chunks_count=len(state.get("retrieved_chunks", [])),
+            similarity_scores=[
+                c.get("similarity_score", 0) if isinstance(c, dict) else c.similarity_score
+                for c in state.get("retrieved_chunks", [])
+            ],
+            cypher_results_count=len(state.get("cypher_results", [])),
+            token_usage=state.get("token_usage"),
+            cost_usd=state.get("cost_usd"),
+            latency_ms=round(state.get("latency_ms", 0), 2),
+        ) if settings.enable_debug_panel else None,
+    )
+
+
+async def _direct_chat_fallback(request: ChatRequest) -> ChatResponse:
+    """Direct OpenAI call or echo — used when agentic workflow is unavailable."""
+    from datetime import datetime, timezone
+    start_time = time.time()
+
+    history = _get_history(request.session_id)
+    timestamp = datetime.now(timezone.utc).isoformat()
+    history.append({"role": "user", "content": request.message, "timestamp": timestamp})
+
+    openai_available = bool(settings.openai_api_key and settings.openai_api_key != "sk-your-openai-key-here")
+
+    if openai_available:
+        answer, token_usage, cost_usd = await _call_openai(history)
+    else:
+        answer = _fallback_response(request.message)
+        token_usage = None
+        cost_usd = None
+
+    history.append({
+        "role": "assistant",
+        "content": answer,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
+
+    latency_ms = (time.time() - start_time) * 1000
+    return ChatResponse(
+        session_id=request.session_id,
+        answer=answer,
+        citations=[],
+        debug=DebugInfo(
+            intent="general_chat",
+            retrieved_chunks_count=0,
+            similarity_scores=[],
+            cypher_results_count=0,
+            token_usage=token_usage,
+            cost_usd=cost_usd,
+            latency_ms=round(latency_ms, 2),
+        ) if settings.enable_debug_panel else None,
+    )
+
+
 def _fallback_response(message: str) -> str:
     """
     Response when OpenAI is not configured.
@@ -241,6 +300,104 @@ async def clear_history(session_id: str):
     if session_id in _sessions:
         del _sessions[session_id]
     return {"message": f"History for session '{session_id}' cleared."}
+
+
+@router.post(
+    "/stream",
+    summary="Send a chat message with SSE streaming",
+    description="""
+Stream the AI response token by token using Server-Sent Events (SSE).
+
+The frontend connects to this endpoint and receives tokens as they arrive.
+This makes responses appear to "type out" word by word, like ChatGPT.
+
+Event format (text/event-stream):
+  data: {"type": "token", "content": "word "}\n\n
+  data: {"type": "token", "content": "by "}\n\n
+  data: {"type": "token", "content": "word"}\n\n
+  data: {"type": "done", "citations": [...], "debug": {...}}\n\n
+    """,
+)
+async def chat_stream(request: ChatRequest):
+    """SSE streaming chat endpoint."""
+    import json
+    from fastapi.responses import StreamingResponse
+    from app.agents.workflow import run_agentic_workflow
+    from app.services.openai_service import chat_completion_stream
+
+    async def generate():
+        """
+        Run the agentic workflow (non-streaming agents), then stream the final answer.
+
+        The Router, Retriever, Context Builder, and Critic agents run normally.
+        Only the final Answer Agent streams its output.
+        """
+        openai_available = bool(
+            settings.openai_api_key and settings.openai_api_key != "sk-your-openai-key-here"
+        )
+
+        if not openai_available:
+            yield f"data: {json.dumps({'type': 'token', 'content': _fallback_response(request.message)})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'citations': [], 'debug': None})}\n\n"
+            return
+
+        try:
+            # Run full workflow (non-streaming) to get context and citations
+            state = await run_agentic_workflow(
+                user_id=request.user_id or "anonymous",
+                session_id=request.session_id,
+                user_query=request.message,
+                document_ids=request.document_ids or None,
+            )
+
+            citations = [
+                {
+                    "chunk_id": c["chunk_id"] if isinstance(c, dict) else c.chunk_id,
+                    "document_id": c["document_id"] if isinstance(c, dict) else c.document_id,
+                    "file_name": c["file_name"] if isinstance(c, dict) else c.file_name,
+                    "page_number": c.get("page_number") if isinstance(c, dict) else c.page_number,
+                    "section_title": c.get("section_title") if isinstance(c, dict) else c.section_title,
+                    "excerpt": c.get("excerpt", "") if isinstance(c, dict) else "",
+                }
+                for c in state.get("citations", [])
+            ]
+
+            # Get the validated answer (already generated by workflow)
+            answer = state.get("validated_answer") or state.get("draft_answer", "")
+
+            # Stream the answer character by character (simulate SSE streaming)
+            # For a true streaming experience, we'd need to modify the workflow to
+            # stream during generation. This approach streams the already-computed answer.
+            chunk_size = 10  # characters per SSE event
+            for i in range(0, len(answer), chunk_size):
+                chunk = answer[i:i + chunk_size]
+                yield f"data: {json.dumps({'type': 'token', 'content': chunk})}\n\n"
+
+            # Send final done event with citations and debug
+            debug = None
+            if settings.enable_debug_panel:
+                debug = {
+                    "intent": state.get("intent"),
+                    "retrieved_chunks_count": len(state.get("retrieved_chunks", [])),
+                    "cypher_results_count": len(state.get("cypher_results", [])),
+                    "latency_ms": round(state.get("latency_ms", 0), 2),
+                    "langfuse_trace_id": state.get("langfuse_trace_id"),
+                }
+
+            yield f"data: {json.dumps({'type': 'done', 'citations': citations, 'debug': debug})}\n\n"
+
+        except Exception as e:
+            logger.error(f"SSE streaming failed: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",   # Disable nginx buffering for SSE
+        },
+    )
 
 
 @router.get("/sessions", summary="List active sessions (debug)")

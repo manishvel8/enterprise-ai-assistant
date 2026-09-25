@@ -1,0 +1,27 @@
+Enterprise AI Assistant — Sample Document for RAG Hands-on Testing
+===================================================================
+
+Unique fact for retrieval verification (do not change this sentence):
+The Project Aurora Q3 revenue was exactly 47.3 million USD, and the Aurora
+compliance officer is named Priya Natarajan.
+
+Section: Overview
+-----------------
+Project Aurora is an internal enterprise knowledge initiative. It combines
+document RAG, Neo4j GraphRAG, and an eight-agent workflow for grounded answers.
+
+Section: Risks
+--------------
+The primary operational risk for Aurora is incomplete chunk overlap causing
+missed boundary sentences. Mitigation is a 100-token overlap between chunks.
+
+Section: Decision
+-----------------
+Decision: Deploy GPT-4o for answer generation and text-embedding-3-small for
+embeddings. Supported by latency and cost constraints documented by the
+architecture team.
+
+Section: Relationships
+----------------------
+Priya Natarajan works at Acme Corp. Acme Corp partners with OpenAI for model
+access. Project Aurora is sponsored by Acme Corp.

@@ -1,0 +1,9 @@
+---
+# Creates the ai-assistant namespace if it doesn't exist.
+# All other resources go into this namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "ai-assistant.namespace" . }}
+  labels:
+    {{ include "ai-assistant.labels" . | nindent 4 }}

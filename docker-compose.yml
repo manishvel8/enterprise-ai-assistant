@@ -70,7 +70,8 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      # Host 5433 → container 5432 (avoids conflict with local Postgres on 5432)
+      - "5433:5432"
     networks:
       - ai-network
     healthcheck:
@@ -190,6 +191,7 @@ services:
     environment:
       # All values come from .env file — none hardcoded here
       OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_API_BASE: ${OPENAI_API_BASE:-}
       OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-4o}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
 
@@ -258,6 +260,7 @@ services:
     restart: unless-stopped
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_API_BASE: ${OPENAI_API_BASE:-}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-ai_assistant}
@@ -286,6 +289,64 @@ services:
         condition: service_healthy
     volumes:
       - ./backend/app:/app/app    # hot reload for worker code too
+
+  # ─── LangGraph Agent ──────────────────────────────────────────────────────────
+  # Purpose: 7-node LangGraph agent with HITL, memory, MCP, and Langfuse tracing.
+  # Chat UI:  http://localhost:7860
+  # API Docs: http://localhost:7860/docs
+  langgraph-agent:
+    build:
+      context: ./langgraph-agent
+      dockerfile: Dockerfile
+    image: ai-langgraph-agent:dev
+    container_name: ai-langgraph-agent
+    restart: unless-stopped
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_API_BASE: ${OPENAI_API_BASE:-}
+      OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-4o}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+
+      # Uses same Postgres as backend (different schema via schema.sql)
+      CONVERSATION_DB_HOST: postgres
+      CONVERSATION_DB_PORT: 5432
+      CONVERSATION_DB_NAME: ${POSTGRES_DB:-ai_assistant}
+      CONVERSATION_DB_USER: ${POSTGRES_USER:-ai_user}
+      CONVERSATION_DB_PASSWORD: ${POSTGRES_PASSWORD:-dev_password}
+
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-pk-lf-REPLACE}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-sk-lf-REPLACE}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-http://localhost:3000}
+      LANGFUSE_ENABLED: ${LANGFUSE_ENABLED:-false}
+
+      APP_HOST: 0.0.0.0
+      APP_PORT: 7860
+      USE_MCP_TOOLS: "false"
+    ports:
+      - "7860:7860"
+    networks:
+      - ai-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./langgraph-agent/app:/app/app       # hot reload for dev
+      - ./langgraph-agent/static:/app/static
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:7860/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
 
   # ─── Angular Frontend ─────────────────────────────────────────────────────────
   # Purpose: Angular SPA served by Nginx.

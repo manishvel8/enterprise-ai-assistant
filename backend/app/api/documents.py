@@ -110,7 +110,7 @@ async def upload_document(
     # Generate unique document ID
     document_id = f"doc_{uuid.uuid4().hex[:12]}"
 
-    # Upload to MinIO
+    # Upload to MinIO (falls back to local disk under backend/.local_uploads/)
     storage_path = storage_service.upload_file(
         document_id=document_id,
         file_bytes=content,
@@ -118,11 +118,17 @@ async def upload_document(
         content_type=content_type,
     )
 
-    if storage_path:
-        _storage_paths[document_id] = storage_path
-        logger.info(f"Stored at: {storage_path}")
-    else:
-        logger.warning(f"MinIO storage failed for {document_id}. Proceeding without file storage.")
+    if not storage_path:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "File storage failed (MinIO unreachable and local fallback failed). "
+                "Check MinIO on :9000 and that `pip install minio` is in the backend venv."
+            ),
+        )
+
+    _storage_paths[document_id] = storage_path
+    logger.info(f"Stored at: {storage_path}")
 
     # Store metadata in memory
     metadata = DocumentMetadata(
@@ -248,28 +254,43 @@ async def get_download_url(document_id: str, expires_seconds: int = 3600):
 )
 async def delete_document(document_id: str):
     """
-    Delete a document and clean up all associated data.
-
-    Milestone 7: Deletes from memory + MinIO.
-    Later milestones: Also deletes from PostgreSQL, Qdrant vectors, Neo4j nodes.
+    Delete a document and clean up associated data (Postgres + MinIO/local + memory).
     """
-    if document_id not in _documents:
+    storage_path = _storage_paths.pop(document_id, None)
+    found = document_id in _documents
+
+    # Prefer Postgres as source of truth (survives API restarts)
+    try:
+        from app.db.postgres import get_session_factory, DocumentModel
+        from sqlalchemy import select, delete
+
+        session_factory = get_session_factory()
+        async with session_factory() as db:
+            result = await db.execute(
+                select(DocumentModel).where(DocumentModel.document_id == document_id)
+            )
+            row = result.scalar_one_or_none()
+            if row is not None:
+                found = True
+                if not storage_path:
+                    storage_path = row.storage_path
+                await db.execute(
+                    delete(DocumentModel).where(DocumentModel.document_id == document_id)
+                )
+                await db.commit()
+    except Exception as e:
+        logger.warning(f"PostgreSQL delete skipped: {e}")
+
+    if not found:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Document '{document_id}' not found.",
         )
 
-    # Delete from MinIO
-    storage_path = _storage_paths.pop(document_id, None)
     if storage_path:
         storage_service.delete_file(storage_path)
 
-    # Delete from memory
-    del _documents[document_id]
-
-    # TODO Milestone 8: Delete from PostgreSQL
-    # TODO Milestone 14: Delete vectors from Qdrant
-    # TODO Milestone 19: Delete nodes from Neo4j
+    _documents.pop(document_id, None)
 
     logger.info(f"Deleted document: {document_id}")
     return {"message": f"Document '{document_id}' deleted successfully."}

@@ -40,13 +40,83 @@ export class ApiService {
 
   /**
    * Send a chat message to the backend.
-   * Milestone 2: Returns echo response.
    * Milestone 4+: Returns OpenAI-generated response.
+   * Milestone 22+: Uses full agentic workflow.
    */
   sendMessage(request: ChatRequest): Observable<ChatResponse> {
     return this.http
       .post<ChatResponse>(`${this.baseUrl}/api/chat`, request)
       .pipe(catchError(this.handleError));
+  }
+
+  /**
+   * Send a chat message with SSE streaming (Milestone 24).
+   *
+   * Returns an EventSource that emits token events.
+   * Event types:
+   *   - token: { type: 'token', content: 'word' }
+   *   - done:  { type: 'done', citations: [...], debug: {...} }
+   *   - error: { type: 'error', content: 'message' }
+   *
+   * Usage in component:
+   *   const es = this.apiService.streamMessage(request);
+   *   es.onmessage = (event) => {
+   *     const data = JSON.parse(event.data);
+   *     if (data.type === 'token') this.currentMessage += data.content;
+   *   };
+   *
+   * Note: EventSource only supports GET. For POST+SSE, we use fetch API
+   * with ReadableStream instead.
+   */
+  streamMessage(
+    request: ChatRequest,
+    onToken: (token: string) => void,
+    onDone: (data: { citations: any[]; debug: any }) => void,
+    onError: (error: string) => void,
+  ): void {
+    fetch(`${this.baseUrl}/api/chat/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
+        if (!reader) {
+          throw new Error('Response body is not readable');
+        }
+
+        const read = () => {
+          reader.read().then(({ done, value }) => {
+            if (done) return;
+            const text = decoder.decode(value, { stream: true });
+            // Parse SSE events
+            const lines = text.split('\n');
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                try {
+                  const data = JSON.parse(line.slice(6));
+                  if (data.type === 'token') {
+                    onToken(data.content);
+                  } else if (data.type === 'done') {
+                    onDone({ citations: data.citations || [], debug: data.debug });
+                  } else if (data.type === 'error') {
+                    onError(data.content);
+                  }
+                } catch {
+                  // Ignore parse errors for partial chunks
+                }
+              }
+            }
+            read(); // Continue reading
+          });
+        };
+        read();
+      })
+      .catch((err) => onError(err.message));
   }
 
   /**

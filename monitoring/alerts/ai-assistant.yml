@@ -1,0 +1,208 @@
+# monitoring/alerts/ai-assistant.yml — Alertmanager alert rules.
+#
+# WHAT IS AN ALERT RULE?
+#   An alert rule is a PromQL expression that, when true for a duration,
+#   fires an alert and sends it to Alertmanager.
+#
+#   Structure:
+#     alert:  <name>           — human-readable name
+#     expr:   <PromQL>         — condition (alert fires when this is TRUE)
+#     for:    <duration>       — must be true for this long before alerting
+#                                (avoids flapping on transient blips)
+#     labels: <key-value>      — metadata for routing (severity, team)
+#     annotations:             — human-readable context (summary, description, runbook)
+#
+# HOW ALERTS FLOW:
+#   1. Prometheus evaluates expr every evaluation_interval (15s)
+#   2. If true for `for` duration → alert fires
+#   3. Alert goes to Alertmanager
+#   4. Alertmanager routes it (email/Slack/PagerDuty based on labels)
+#
+# SEVERITY LEVELS:
+#   critical → page on-call immediately (production down)
+#   warning  → notify team (degradation, not outage)
+#   info     → awareness only
+
+groups:
+  - name: api_availability
+    rules:
+
+      # ── API Down ────────────────────────────────────────────────────────
+      - alert: BackendDown
+        expr: up{job="backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Enterprise AI Backend is DOWN"
+          description: |
+            The FastAPI backend (:8000) has been unreachable for 1 minute.
+            Prometheus cannot scrape its /metrics endpoint.
+
+            IMMEDIATE ACTIONS:
+            1. kubectl get pods -n ai-assistant -l app=backend
+            2. kubectl logs -n ai-assistant -l app=backend --tail=100
+            3. kubectl describe pod -n ai-assistant <pod-name>
+          runbook: "https://wiki.example.com/runbooks/backend-down"
+
+      # ── LangGraph Agent Down ─────────────────────────────────────────────
+      - alert: LangGraphAgentDown
+        expr: up{job="langgraph-agent"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: ai
+        annotations:
+          summary: "LangGraph Agent is DOWN"
+          description: |
+            The LangGraph Agent (:7860) is unreachable.
+            HITL conversations will fail. Memory operations unavailable.
+
+            Check: kubectl get pods -n ai-assistant -l app=langgraph-agent
+
+  - name: api_errors
+    rules:
+
+      # ── High Error Rate ──────────────────────────────────────────────────
+      - alert: HighErrorRate
+        expr: |
+          rate(http_requests_total{status_code=~"5.."}[5m])
+          /
+          rate(http_requests_total[5m]) > 0.05
+        for: 3m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "High HTTP 5xx error rate: {{ $value | humanizePercentage }}"
+          description: |
+            More than 5% of requests are returning 5xx errors.
+            Current rate: {{ $value | humanizePercentage }}
+
+            LIKELY CAUSES:
+            - OpenAI API key invalid or quota exceeded
+            - PostgreSQL connection pool exhausted
+            - Qdrant unavailable (vector search failing)
+            - OOM kill (memory limit hit)
+
+            CHECK:
+            kubectl logs -n ai-assistant -l app=backend --tail=200 | grep ERROR
+
+      # ── High 4xx Rate ─────────────────────────────────────────────────────
+      - alert: High4xxRate
+        expr: |
+          rate(http_requests_total{status_code=~"4.."}[5m])
+          /
+          rate(http_requests_total[5m]) > 0.20
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "High 4xx rate: {{ $value | humanizePercentage }}"
+          description: |
+            More than 20% of requests are returning 4xx errors.
+            This often means client issues (bad auth, wrong payloads)
+            but can indicate an API contract change.
+
+  - name: api_latency
+    rules:
+
+      # ── High P95 Latency ──────────────────────────────────────────────────
+      - alert: HighChatLatency
+        expr: |
+          histogram_quantile(0.95,
+            rate(http_request_duration_seconds_bucket{path="/api/chat"}[5m])
+          ) > 10
+        for: 5m
+        labels:
+          severity: warning
+          team: ai
+        annotations:
+          summary: "Chat P95 latency is {{ $value | humanizeDuration }}"
+          description: |
+            95th percentile chat response time exceeds 10 seconds.
+            Users are experiencing slow responses.
+
+            LIKELY CAUSES:
+            - OpenAI API latency spike (check status.openai.com)
+            - Qdrant slow query (index not loaded, OOM swap)
+            - 7-node graph running all nodes sequentially (check Langfuse traces)
+            - Pod CPU throttled (check resource limits)
+
+  - name: kubernetes
+    rules:
+
+      # ── Pod Restart Loop ─────────────────────────────────────────────────
+      - alert: PodCrashLooping
+        expr: |
+          increase(kube_pod_container_status_restarts_total{
+            namespace="ai-assistant"
+          }[1h]) > 3
+        for: 5m
+        labels:
+          severity: critical
+          team: ops
+        annotations:
+          summary: "Pod {{ $labels.pod }} is crash-looping"
+          description: |
+            Pod {{ $labels.pod }} has restarted {{ $value }} times in the last hour.
+
+            DIAGNOSIS:
+            kubectl describe pod {{ $labels.pod }} -n ai-assistant
+            kubectl logs {{ $labels.pod }} -n ai-assistant --previous
+
+      # ── High Memory Usage ─────────────────────────────────────────────────
+      - alert: HighMemoryUsage
+        expr: |
+          container_memory_usage_bytes{namespace="ai-assistant"}
+          /
+          container_spec_memory_limit_bytes{namespace="ai-assistant"} > 0.90
+        for: 5m
+        labels:
+          severity: warning
+          team: ops
+        annotations:
+          summary: "Container {{ $labels.container }} using >90% memory"
+          description: |
+            Container {{ $labels.container }} in pod {{ $labels.pod }}
+            is using {{ $value | humanizePercentage }} of its memory limit.
+            OOM kill is imminent.
+
+            ACTION: Increase memory limit in k8s deployment YAML.
+
+  - name: database
+    rules:
+
+      # ── PostgreSQL Connection Pool Near Limit ────────────────────────────
+      - alert: PostgresConnectionsHigh
+        expr: pg_stat_database_numbackends > 80
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "PostgreSQL connections: {{ $value }}"
+          description: |
+            PostgreSQL has {{ $value }} active connections.
+            Connection pool exhaustion causes 'too many connections' errors.
+            Consider: pgbouncer connection pooler or increase max_connections.
+
+  - name: llm_costs
+    rules:
+
+      # ── High LLM Cost Rate ────────────────────────────────────────────────
+      - alert: HighLLMCostRate
+        expr: |
+          rate(llm_cost_usd_total[1h]) * 3600 > 10
+        for: 15m
+        labels:
+          severity: warning
+          team: ai
+        annotations:
+          summary: "LLM cost rate: ${{ $value | humanize }}/hour"
+          description: |
+            LLM API costs exceed $10/hour.
+            Check Langfuse for expensive traces or unusual usage patterns.
+            Consider model fallback to gpt-4o-mini for simple queries.

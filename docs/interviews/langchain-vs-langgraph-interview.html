@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Interview Guide — LangChain-style Enterprise RAG vs LangGraph Agent</title>
+<style>
+:root {
+  --bg: #0a0e14;
+  --panel: #12181f;
+  --panel2: #182029;
+  --line: #2a3544;
+  --text: #e8eef6;
+  --muted: #9aabbd;
+  --accent: #4ea1ff;
+  --green: #3ecf8e;
+  --yellow: #e6b84d;
+  --red: #f07178;
+  --purple: #c792ea;
+  --orange: #ff9e64;
+  --cyan: #7fdbca;
+  --pink: #f78c6c;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  background:
+    radial-gradient(1000px 500px at 0% 0%, #14253a 0%, transparent 50%),
+    radial-gradient(800px 400px at 100% 10%, #1a2430 0%, transparent 45%),
+    var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 28px 18px 90px; }
+
+header {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 28px;
+  background: linear-gradient(145deg, #152033, #101820 55%);
+  margin-bottom: 20px;
+}
+header h1 { margin: 0 0 10px; font-size: 1.65rem; letter-spacing: -0.02em; }
+header p { margin: 0; color: var(--muted); max-width: 80ch; }
+.badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.badge {
+  font-size: 12px; padding: 4px 10px; border-radius: 999px;
+  border: 1px solid var(--line); background: #0f1620; color: var(--muted);
+}
+.badge.a { border-color: #2e4f6b; color: var(--accent); }
+.badge.b { border-color: #5a3d6b; color: var(--purple); }
+.badge.g { border-color: #2e6b4f; color: var(--green); }
+
+/* sticky TOC */
+.toc {
+  position: sticky; top: 0; z-index: 20;
+  background: rgba(10,14,20,0.92); backdrop-filter: blur(8px);
+  border: 1px solid var(--line); border-radius: 12px;
+  padding: 12px 14px; margin-bottom: 18px;
+}
+.toc strong { display: block; font-size: 11px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; margin-bottom: 8px; }
+.toc-links { display: flex; flex-wrap: wrap; gap: 6px; }
+.toc-links a {
+  font-size: 12px; padding: 5px 10px; border-radius: 8px;
+  background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+}
+
+section {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 22px;
+  margin-bottom: 16px;
+}
+section h2 {
+  margin: 0 0 12px; font-size: 1.28rem;
+  border-bottom: 1px solid var(--line); padding-bottom: 10px;
+}
+section h3 { margin: 18px 0 8px; font-size: 1.05rem; color: var(--cyan); }
+section h4 { margin: 14px 0 6px; font-size: 0.95rem; color: var(--yellow); }
+.muted { color: var(--muted); }
+.grid-2 { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
+@media (max-width: 820px) { .grid-2 { grid-template-columns: 1fr; } }
+
+.card {
+  background: var(--panel2); border: 1px solid var(--line);
+  border-radius: 10px; padding: 14px;
+}
+.card.ent { border-color: #2e4f6b; }
+.card.lg { border-color: #5a3d6b; }
+.card h4 { margin: 0 0 8px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 0.9rem; margin: 10px 0; }
+th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+th { background: #152033; color: var(--muted); font-weight: 600; }
+code, .mono {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.86em;
+}
+code {
+  background: #0c121a; border: 1px solid var(--line);
+  border-radius: 4px; padding: 1px 6px; color: #d7e6ff;
+}
+pre {
+  background: #0a1018; border: 1px solid var(--line); border-radius: 10px;
+  padding: 12px 14px; overflow-x: auto;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.82rem; line-height: 1.45; color: #d5e4f7;
+}
+
+.flow {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 12px 0;
+}
+.flow .n {
+  background: #142033; border: 1px solid #2f4d70; color: #b9d8ff;
+  padding: 6px 10px; border-radius: 8px; font-size: 0.82rem; font-weight: 600;
+}
+.flow .n.p { border-color: #5a3d6b; color: var(--purple); background: #1a1222; }
+.flow .n.g { border-color: #2e6b4f; color: var(--green); background: #102218; }
+.flow .n.y { border-color: #6b5a2e; color: var(--yellow); background: #1a1608; }
+.flow .arr { color: var(--muted); }
+
+.qa {
+  border-left: 3px solid var(--accent);
+  background: linear-gradient(90deg, rgba(78,161,255,0.07), transparent);
+  padding: 12px 14px; margin: 12px 0; border-radius: 0 10px 10px 0;
+}
+.qa .q { font-weight: 700; color: var(--accent); margin-bottom: 6px; }
+.qa .a { color: var(--text); }
+
+.callout {
+  border: 1px solid #2e4f6b; background: #101a26; border-radius: 10px;
+  padding: 12px 14px; margin: 12px 0; color: var(--muted);
+}
+.callout strong { color: var(--accent); }
+.callout.ok { border-color: #2e6b4f; background: #0f1a14; }
+.callout.ok strong { color: var(--green); }
+.callout.warn { border-color: #6b5a2e; background: #1a1608; }
+.callout.warn strong { color: var(--yellow); }
+.callout.purple { border-color: #5a3d6b; background: #16101e; }
+.callout.purple strong { color: var(--purple); }
+
+.path { font-size: 0.8rem; color: var(--muted); }
+.footer { text-align: center; color: var(--muted); font-size: 0.85rem; margin-top: 24px; }
+.tag-ent { color: var(--accent); font-weight: 700; }
+.tag-lg { color: var(--purple); font-weight: 700; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Interview Technical Guide — Enterprise RAG (LangChain-style) vs LangGraph</h1>
+  <p>
+    One continuous story of <strong>everything built in this repo</strong>:
+    document ingestion, Angular chat, custom multi-agent workflow, then the standalone
+    LangGraph agent with human-in-the-loop, web search, and quality loops —
+    with interview Q&amp;A you can speak aloud.
+  </p>
+  <div class="badges">
+    <span class="badge a">Enterprise :4200 / :8000</span>
+    <span class="badge b">LangGraph :7860</span>
+    <span class="badge g">Shared Qdrant collection: chunks</span>
+    <span class="badge">Hands-on verified</span>
+  </div>
+</header>
+
+<nav class="toc">
+  <strong>Contents</strong>
+  <div class="toc-links">
+    <a href="#elevator">1. Elevator pitch</a>
+    <a href="#map">2. System map</a>
+    <a href="#ingest">3. Ingestion E2E</a>
+    <a href="#enterprise-chat">4. Enterprise chat agents</a>
+    <a href="#langchain-vs">5. LangChain vs LangGraph</a>
+    <a href="#langgraph">6. LangGraph deep dive</a>
+    <a href="#compare">7. Side-by-side</a>
+    <a href="#bugs">8. Real bugs we fixed</a>
+    <a href="#interview">9. Interview Q&amp;A</a>
+    <a href="#urls">10. URLs &amp; commands</a>
+  </div>
+</nav>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<section id="elevator">
+  <h2>1. Elevator pitch (30 seconds)</h2>
+  <div class="qa">
+    <div class="q">“Tell me about your project.”</div>
+    <div class="a">
+      I built an <strong>Enterprise AI Document Assistant</strong>. Users upload PDFs in an Angular UI;
+      a Celery worker parses, chunks, embeds, and stores vectors in <strong>Qdrant</strong> (and entities in Neo4j).
+      Chat goes through a <strong>custom multi-agent pipeline</strong> (router → rewrite → retrieve → answer → critic → memory)
+      on FastAPI — LangChain-style agents, but orchestrated by our own code, not a LangGraph StateGraph yet.
+      <br><br>
+      Separately I built a <strong>LangGraph agentic demo</strong> that reuses the same Qdrant <code>chunks</code> collection.
+      It has 7 nodes, conditional routing to RAG / Tavily web search / human-in-the-loop,
+      a quality revise loop, and an SSE UI that lights up each node live.
+    </div>
+  </div>
+  <div class="callout ok">
+    <strong>One sentence difference:</strong>
+    Enterprise = production-shaped platform (ingest + GraphRAG + Angular).
+    LangGraph = true graph orchestration demo (HITL + web + live node stream) on shared vectors.
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<section id="map">
+  <h2>2. System map — what talks to what</h2>
+
+  <div class="grid-2">
+    <div class="card ent">
+      <h4><span class="tag-ent">A.</span> Enterprise stack</h4>
+      <ul>
+        <li>UI: Angular 19 → <code>:4200</code></li>
+        <li>API: FastAPI → <code>:8000</code></li>
+        <li>Worker: Celery + Redis</li>
+        <li>Store: Postgres, MinIO, Qdrant, Neo4j</li>
+        <li>LLM: GPT-4o + text-embedding-3-small</li>
+      </ul>
+      <p class="path">frontend/ · backend/app/</p>
+    </div>
+    <div class="card lg">
+      <h4><span class="tag-lg">B.</span> LangGraph stack</h4>
+      <ul>
+        <li>UI: static HTML → <code>:7860</code></li>
+        <li>API: FastAPI + SSE</li>
+        <li>Orchestration: LangGraph StateGraph + MemorySaver</li>
+        <li>Retrieval: same Qdrant <code>chunks</code></li>
+        <li>Web: Tavily · HITL: interrupt/resume</li>
+      </ul>
+      <p class="path">langgraph-agent/</p>
+    </div>
+  </div>
+
+  <h3>Shared knowledge plane</h3>
+  <div class="flow">
+    <span class="n">Upload PDF (:4200)</span><span class="arr">→</span>
+    <span class="n">Celery ingest</span><span class="arr">→</span>
+    <span class="n g">Qdrant chunks</span><span class="arr">→</span>
+    <span class="n">Enterprise chat (:4200)</span>
+    <span class="arr">and</span>
+    <span class="n p">LangGraph RAG (:7860)</span>
+  </div>
+  <p class="muted">
+    LangGraph does <strong>not</strong> upload documents. It only searches vectors that enterprise ingestion wrote.
+  </p>
+
+  <h3>Infra ports (Docker)</h3>
+  <table>
+    <thead><tr><th>Service</th><th>Port</th><th>Used by</th></tr></thead>
+    <tbody>
+      <tr><td>Postgres</td><td>5433</td><td>Enterprise docs/sessions/messages</td></tr>
+      <tr><td>Redis</td><td>6379</td><td>Celery broker</td></tr>
+      <tr><td>Qdrant</td><td>6333</td><td>Both apps (collection <code>chunks</code>)</td></tr>
+      <tr><td>MinIO</td><td>9000 / 9001</td><td>PDF object storage</td></tr>
+      <tr><td>Neo4j</td><td>7474 / 7687</td><td>Enterprise GraphRAG only</td></tr>
+      <tr><td>Enterprise API</td><td>8000</td><td>Upload + agentic chat</td></tr>
+      <tr><td>Angular</td><td>4200</td><td>Documents + Chat UI</td></tr>
+      <tr><td>LangGraph</td><td>7860</td><td>Agent graph UI + SSE</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<section id="ingest">
+  <h2>3. Document ingestion E2E (enterprise only)</h2>
+  <p class="muted">This is the “offline” path that fills the vector DB before any chat.</p>
+
+  <div class="flow">
+    <span class="n">UI Upload</span><span class="arr">→</span>
+    <span class="n">POST /api/documents/upload</span><span class="arr">→</span>
+    <span class="n">MinIO + Postgres PENDING</span><span class="arr">→</span>
+    <span class="n y">Celery worker</span><span class="arr">→</span>
+    <span class="n">Parse</span><span class="arr">→</span>
+    <span class="n">Normalize</span><span class="arr">→</span>
+    <span class="n">Chunk</span><span class="arr">→</span>
+    <span class="n">Embed</span><span class="arr">→</span>
+    <span class="n g">Qdrant + Neo4j</span><span class="arr">→</span>
+    <span class="n g">COMPLETE</span>
+  </div>
+
+  <h3>Technical details (interview numbers)</h3>
+  <table>
+    <thead><tr><th>Step</th><th>What / why</th><th>Key code</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Upload</td>
+        <td>Store original PDF in MinIO; insert Postgres row <code>status=pending</code>; enqueue task (HTTP 202).</td>
+        <td><code>backend/app/api/documents.py</code></td>
+      </tr>
+      <tr>
+        <td>Parse</td>
+        <td>PyMuPDF (<code>fitz</code>); validate <code>%PDF</code> magic bytes.</td>
+        <td><code>parsers/pdf_parser.py</code></td>
+      </tr>
+      <tr>
+        <td>Chunk</td>
+        <td>tiktoken <code>cl100k_base</code>: <strong>800</strong> max / <strong>100</strong> overlap / 50 min tokens. Overlap preserves context across boundaries.</td>
+        <td><code>pipeline/chunker.py</code></td>
+      </tr>
+      <tr>
+        <td>Embed</td>
+        <td><code>text-embedding-3-small</code> → 1536-d vectors.</td>
+        <td><code>pipeline/embedder.py</code></td>
+      </tr>
+      <tr>
+        <td>Vector store</td>
+        <td>Qdrant collection <code>chunks</code>, cosine distance. Payload: <code>chunk_text</code>, <code>file_name</code>, <code>document_id</code>, page, section.</td>
+        <td><code>db/vector_store.py</code></td>
+      </tr>
+      <tr>
+        <td>Graph</td>
+        <td>Extract entities → Neo4j Document/Chunk/Person/Org (GraphRAG enrichment).</td>
+        <td><code>pipeline/entity_extractor.py</code>, <code>db/neo4j_client.py</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="qa">
+    <div class="q">“Why chunk with overlap?”</div>
+    <div class="a">
+      A fact near a chunk boundary can be split. 100-token overlap means neighboring chunks share context,
+      so retrieval still finds the full idea. Trade-off: more storage and slight duplication.
+    </div>
+  </div>
+  <div class="qa">
+    <div class="q">“Why Celery instead of doing it in the API request?”</div>
+    <div class="a">
+      Parsing + embedding can take minutes. Returning 202 keeps the API fast; the worker processes asynchronously;
+      UI polls status until <code>complete</code>.
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<section id="enterprise-chat">
+  <h2>4. Enterprise chat — custom multi-agent workflow (LangChain-style)</h2>
+
+  <div class="callout">
+    <strong>Important wording for interviews:</strong>
+    This stack is <em>agentic</em> and similar to LangChain agent patterns (state in / state out, tool-like retrieval),
+    but orchestration is <strong>hand-written Python</strong> in <code>run_agentic_workflow()</code> —
+    not a LangGraph <code>StateGraph</code>. We later built real LangGraph in <code>langgraph-agent/</code>.
+  </div>
+
+  <h3>Flow</h3>
+  <div class="flow">
+    <span class="n">User message</span><span class="arr">→</span>
+    <span class="n">Router</span><span class="arr">→</span>
+    <span class="n">Rewrite</span><span class="arr">→</span>
+    <span class="n">Retriever (± Cypher)</span><span class="arr">→</span>
+    <span class="n">ContextBuilder</span><span class="arr">→</span>
+    <span class="n">Answer</span><span class="arr">↔</span>
+    <span class="n y">Critic</span><span class="arr">→</span>
+    <span class="n">Memory</span>
+  </div>
+
+  <h3>Agents (what each does)</h3>
+  <table>
+    <thead><tr><th>Agent</th><th>Job</th><th>File</th></tr></thead>
+    <tbody>
+      <tr><td>Router</td><td>Intent: <code>doc_question</code> | <code>graph_question</code> | <code>general_chat</code> | <code>summary</code>. Heuristics fix LLM misroutes (resume words → doc_question).</td><td><code>agents/router_agent.py</code></td></tr>
+      <tr><td>Rewrite</td><td>Clarify query for better retrieval.</td><td><code>agents/rewrite_agent.py</code></td></tr>
+      <tr><td>Retriever</td><td>Embed query → Qdrant top_k=5, threshold 0.25. Optional GraphRAG mode.</td><td><code>agents/retriever_agent.py</code>, <code>db/retriever.py</code></td></tr>
+      <tr><td>Cypher</td><td>Neo4j graph questions (entities/relations).</td><td><code>agents/cypher_agent.py</code></td></tr>
+      <tr><td>ContextBuilder</td><td>Format chunks into LLM context + citations.</td><td><code>agents/context_builder_agent.py</code></td></tr>
+      <tr><td>Answer</td><td>GPT-4o grounded answer.</td><td><code>agents/answer_agent.py</code></td></tr>
+      <tr><td>Critic</td><td>Groundedness check; if fail → Answer again (max 2).</td><td><code>agents/critic_agent.py</code></td></tr>
+      <tr><td>Memory</td><td>Upsert session + insert user/assistant messages in Postgres.</td><td><code>agents/memory_agent.py</code></td></tr>
+    </tbody>
+  </table>
+
+  <h3>API / UI</h3>
+  <ul>
+    <li><code>POST /api/chat</code> → full JSON answer + debug metadata</li>
+    <li>Angular Chat page: sessions sidebar, citations, debug panel</li>
+    <li>Documents page: upload + status + chunk counts</li>
+  </ul>
+  <p class="path">Orchestrator: <code>backend/app/agents/workflow.py</code> · API: <code>backend/app/api/chat.py</code></p>
+
+  <div class="qa">
+    <div class="q">“How is this like LangChain?”</div>
+    <div class="a">
+      Same ideas: LLM + tools/retrieval, shared state, chaining steps, critic/retry.
+      Difference: we didn’t use LangChain’s LCEL chains or LangGraph’s graph runtime —
+      each agent is a plain async function mutating a shared state object, called in sequence with if-branches.
+    </div>
+  </div>
+  <div class="qa">
+    <div class="q">“What is GraphRAG here?”</div>
+    <div class="a">
+      After vector retrieval, we can enrich with Neo4j entities (people, orgs linked to chunks).
+      Useful for “who worked where” style questions that benefit from relationships, not only cosine similarity.
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<section id="langchain-vs">
+  <h2>5. LangChain vs LangGraph — conceptual (say this clearly)</h2>
+
+  <div class="grid-2">
+    <div class="card">
+      <h4>LangChain (library / patterns)</h4>
+      <ul>
+        <li>Building blocks: prompts, models, retrievers, tools, memory</li>
+        <li>Great for linear or lightly branched pipelines</li>
+        <li>“Chain” = step outputs feed next step</li>
+        <li>Agents can call tools in a loop</li>
+      </ul>
+      <p class="muted">Our enterprise workflow is <em>in the spirit of</em> LangChain agents, implemented custom.</p>
+    </div>
+    <div class="card lg">
+      <h4>LangGraph (orchestration runtime)</h4>
+      <ul>
+        <li>Explicit <strong>graph</strong>: nodes + edges + state</li>
+        <li>Conditional routing as first-class edges</li>
+        <li>Cycles (quality → regenerate) with retry caps</li>
+        <li>Checkpointer + <code>interrupt()</code> for human-in-the-loop</li>
+        <li>Thread IDs for pause/resume across HTTP requests</li>
+      </ul>
+      <p class="muted">Our <code>langgraph-agent/</code> is real LangGraph.</p>
+    </div>
+  </div>
+
+  <pre>LangChain focus:  components to call LLMs & tools
+LangGraph focus:  how control flow moves between those steps over time
+
+Enterprise app  ≈ custom LangChain-style agent pipeline
+langgraph-agent ≈ LangGraph StateGraph with HITL + web + quality loop</pre>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<section id="langgraph">
+  <h2>6. LangGraph deep dive (7 nodes)</h2>
+
+  <div class="flow">
+    <span class="n">START</span><span class="arr">→</span>
+    <span class="n">1 Validator</span><span class="arr">→</span>
+    <span class="n">2 Router</span><span class="arr">→</span>
+    <span class="n g">3 RAG</span><span class="arr">/</span>
+    <span class="n">3 Web</span><span class="arr">/</span>
+    <span class="n p">3 Human</span><span class="arr">→</span>
+    <span class="n">6 Generator</span><span class="arr">→</span>
+    <span class="n y">7 Quality</span><span class="arr">→</span>
+    <span class="n g">END</span>
+  </div>
+  <p class="muted">Quality can loop back to Generator (REVISE) up to max_retries=3.</p>
+
+  <h3>Shared state (whiteboard)</h3>
+  <p>
+    Every node reads/writes a typed <code>AgentState</code>
+    (<code>langgraph-agent/app/graph/state.py</code>):
+    query fields, route, retrieved docs, web results, human input, evidence,
+    generated answer, quality result, retry_count, execution_trace, errors.
+  </p>
+
+  <h3>Node cheat-sheet</h3>
+  <table>
+    <thead><tr><th>#</th><th>Node</th><th>Technical job</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td><code>query_validator</code></td><td>Structured LLM output: valid? sanitize? block injection/gibberish → END if invalid.</td></tr>
+      <tr><td>2</td><td><code>router</code></td><td>Heuristics + LLM → <code>rag</code> | <code>web_search</code> | <code>needs_human</code>.</td></tr>
+      <tr><td>3</td><td><code>rag_retriever</code></td><td>Embed → Qdrant <code>query_points</code> top_k=5, threshold 0.25.</td></tr>
+      <tr><td>4</td><td><code>web_searcher</code></td><td>Tavily sync client → snippets + URLs.</td></tr>
+      <tr><td>5</td><td><code>human_gate</code></td><td><code>interrupt()</code> pauses; resume with human text; rewrite search query; set route.</td></tr>
+      <tr><td>6</td><td><code>response_generator</code></td><td>Build evidence → GPT-4o answer with citations.</td></tr>
+      <tr><td>7</td><td><code>quality_checker</code></td><td>LLM-as-judge PASS/REVISE; force PASS at max retries.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Human-in-the-loop (must explain in interviews)</h3>
+  <pre>1. human_gate calls interrupt({ question })
+2. LangGraph saves full state in MemorySaver under thread_id
+3. API sends SSE event type=interrupt → UI shows purple panel
+4. User answers → POST /api/chat/resume { thread_id, human_input }
+5. API runs graph.stream(Command(resume=human_input), config)
+6. interrupt() returns the human text; graph continues to RAG or Web</pre>
+
+  <div class="callout purple">
+    <strong>Implementation detail we hit in production of this demo:</strong>
+    On LangGraph 1.2.x, <code>interrupt()</code> failed under async <code>astream()</code>
+    (“Called get_config outside of a runnable context”).
+    Fix: sync <code>graph.stream()</code> in a worker thread + wrap async nodes with <code>asyncio.run</code>;
+    keep <code>human_gate</code> sync.
+  </div>
+
+  <h3>SSE event types</h3>
+  <table>
+    <thead><tr><th>Event</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>started</code></td><td>Thread began</td></tr>
+      <tr><td><code>node_update</code></td><td>A node finished — UI paints graph + trace</td></tr>
+      <tr><td><code>interrupt</code></td><td>Waiting on human</td></tr>
+      <tr><td><code>final</code></td><td>Answer + sources + quality</td></tr>
+      <tr><td><code>error</code> / <code>done</code></td><td>Failure / stream end</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Key files</h3>
+  <pre>langgraph-agent/
+  app/graph/state.py        AgentState
+  app/graph/edges.py        conditional routing functions
+  app/graph/workflow.py     StateGraph compile + MemorySaver
+  app/agents/*.py           7 nodes
+  app/services/llm_service.py | qdrant_service.py | tavily_service.py
+  app/main.py               FastAPI SSE
+  static/index.html         live graph UI
+  .env                      OPENAI_*, TAVILY_*, QDRANT_*</pre>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<section id="compare">
+  <h2>7. Side-by-side comparison (memorize this table)</h2>
+  <table>
+    <thead>
+      <tr><th>Dimension</th><th>Enterprise (:4200/:8000)</th><th>LangGraph (:7860)</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Orchestration</td>
+        <td>Custom sequential agents + if-branches</td>
+        <td>LangGraph StateGraph + conditional edges</td>
+      </tr>
+      <tr>
+        <td>Human-in-the-loop</td>
+        <td>No</td>
+        <td>Yes — interrupt / resume</td>
+      </tr>
+      <tr>
+        <td>Web search</td>
+        <td>No</td>
+        <td>Tavily</td>
+      </tr>
+      <tr>
+        <td>GraphRAG / Neo4j</td>
+        <td>Yes</td>
+        <td>No</td>
+      </tr>
+      <tr>
+        <td>Ingestion</td>
+        <td>Full pipeline + Documents UI</td>
+        <td>None (reads shared Qdrant)</td>
+      </tr>
+      <tr>
+        <td>Quality loop</td>
+        <td>Critic, max 2</td>
+        <td>quality_checker, max 3</td>
+      </tr>
+      <tr>
+        <td>Chat transport</td>
+        <td>JSON (optional SSE of finished answer)</td>
+        <td>SSE per-node updates</td>
+      </tr>
+      <tr>
+        <td>State persistence</td>
+        <td>Postgres sessions/messages</td>
+        <td>MemorySaver by thread_id (in-memory)</td>
+      </tr>
+      <tr>
+        <td>UI</td>
+        <td>Angular Chat + Documents + debug</td>
+        <td>Graph viz + trace + human gate + state inspector</td>
+      </tr>
+      <tr>
+        <td>Vector collection</td>
+        <td><code>chunks</code></td>
+        <td><code>chunks</code> (same)</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<section id="bugs">
+  <h2>8. Real bugs we fixed (strong interview stories)</h2>
+  <p class="muted">Interviewers love “what went wrong and how you debugged it.”</p>
+
+  <table>
+    <thead><tr><th>Symptom</th><th>Root cause</th><th>Fix</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>PDF parse failed / fake MinIO path</td>
+        <td><code>minio</code> package missing; fake <code>local://</code> path</td>
+        <td>Install minio; real disk fallback; <code>%PDF</code> validation</td>
+      </tr>
+      <tr>
+        <td>0 Qdrant points but status complete</td>
+        <td><code>qdrant-client</code> commented out</td>
+        <td>Install + fail if 0 vectors stored</td>
+      </tr>
+      <tr>
+        <td>RAG returned nothing (score ~0.48)</td>
+        <td>Threshold 0.5 too high</td>
+        <td>Lower to <strong>0.25</strong></td>
+      </tr>
+      <tr>
+        <td>Resume questions → general_chat</td>
+        <td>LLM router misclassify</td>
+        <td>Heuristic override on doc keywords</td>
+      </tr>
+      <tr>
+        <td>Blank Angular chat/documents</td>
+        <td>Wrong lazy routing / CSS scoped to component</td>
+        <td><code>loadComponent</code>; global theme in <code>styles.scss</code></td>
+      </tr>
+      <tr>
+        <td>LangGraph RAG 0 chunks while Angular worked</td>
+        <td>qdrant-client 1.19 removed <code>.search()</code></td>
+        <td>Use <code>query_points()</code></td>
+      </tr>
+      <tr>
+        <td>Human gate: get_config outside runnable</td>
+        <td><code>interrupt()</code> + async <code>astream</code></td>
+        <td>Sync <code>stream()</code> + sync human_gate</td>
+      </tr>
+      <tr>
+        <td>After “live web”: [Tavily error] ~60s</td>
+        <td>AsyncTavilyClient under <code>asyncio.run</code> wrappers</td>
+        <td>Sync <code>TavilyClient</code> + query rewrite after HITL</td>
+      </tr>
+      <tr>
+        <td>Port 7860 showed Enterprise JSON</td>
+        <td>Started backend uvicorn on 7860 by mistake</td>
+        <td>Run from <code>langgraph-agent/</code> with its venv</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<section id="interview">
+  <h2>9. Interview Q&amp;A bank (speak these)</h2>
+
+  <div class="qa">
+    <div class="q">Q: Walk me through a user asking about a resume.</div>
+    <div class="a">
+      PDF already ingested → vectors in Qdrant.
+      <strong>Enterprise:</strong> Router → doc_question → rewrite → retrieve (top 5, ≥0.25) → context → GPT-4o → critic → memory → Angular shows answer + sources.
+      <strong>LangGraph:</strong> Validator → router(rag) → rag_retriever → response_generator → quality_checker → SSE final with sources; UI highlights each node.
+    </div>
+  </div>
+
+  <div class="qa">
+    <div class="q">Q: Why LangGraph if you already had agents?</div>
+    <div class="a">
+      Custom workflow is great for a linear enterprise path.
+      LangGraph adds durable branching, cycles, checkpointer, and interrupt/resume —
+      needed for human-in-the-loop and multi-path (RAG vs web) with clean observability.
+    </div>
+  </div>
+
+  <div class="qa">
+    <div class="q">Q: How do you prevent infinite revise loops?</div>
+    <div class="a">
+      Enterprise critic: max 2 retries. LangGraph quality_checker: increment retry_count on REVISE;
+      when retry_count ≥ max_retries (3), force PASS and return best answer.
+    </div>
+  </div>
+
+  <div class="qa">
+    <div class="q">Q: Cosine similarity — what does 0.25 mean?</div>
+    <div class="a">
+      With text-embedding-3-small, good enterprise PDF matches often land ~0.30–0.55.
+      Threshold 0.5 dropped real hits (e.g. 0.48). 0.25 filters junk but keeps relevant chunks.
+    </div>
+  </div>
+
+  <div class="qa">
+    <div class="q">Q: How is Tavily configured?</div>
+    <div class="a">
+      Free Researcher key (<code>tvly-dev-...</code>) in <code>langgraph-agent/.env</code> as <code>TAVILY_API_KEY</code>,
+      loaded by pydantic Settings → <code>tavily_service.py</code>. Restart uvicorn after change.
+      Health endpoint shows <code>tavily.configured: true</code>.
+    </div>
+  </div>
+
+  <div class="qa">
+    <div class="q">Q: Security — where are secrets?</div>
+    <div class="a">
+      Only in <code>.env</code> (gitignored). Never hard-coded. Internal OpenAI gateway base URL and keys stay in env.
+      Don’t paste keys into chats or commits.
+    </div>
+  </div>
+
+  <div class="qa">
+    <div class="q">Q: What would you harden for production?</div>
+    <div class="a">
+      Swap MemorySaver → Postgres/SQLite checkpointer; auth on APIs; rate limits;
+      Celery concurrency tuning; observe with LangSmith/Langfuse; pin qdrant-client to server major version;
+      dedicated collections per tenant.
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<section id="urls">
+  <h2>10. Hands-on URLs &amp; commands (quick recall)</h2>
+
+  <h3>Browser map</h3>
+  <table>
+    <thead><tr><th>URL</th><th>What</th></tr></thead>
+    <tbody>
+      <tr><td><a href="http://localhost:4200/documents">http://localhost:4200/documents</a></td><td>Upload PDFs</td></tr>
+      <tr><td><a href="http://localhost:4200/chat">http://localhost:4200/chat</a></td><td>Enterprise multi-agent chat</td></tr>
+      <tr><td><a href="http://localhost:8000/docs">http://localhost:8000/docs</a></td><td>Enterprise Swagger</td></tr>
+      <tr><td><a href="http://localhost:7860">http://localhost:7860</a></td><td>LangGraph agent UI</td></tr>
+      <tr><td><a href="http://localhost:6333/dashboard">http://localhost:6333/dashboard</a></td><td>Qdrant</td></tr>
+      <tr><td><a href="http://localhost:9001">http://localhost:9001</a></td><td>MinIO (minioadmin/minioadmin)</td></tr>
+      <tr><td><a href="http://localhost:7474">http://localhost:7474</a></td><td>Neo4j (neo4j/dev_password)</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Start commands (after reboot)</h3>
+  <pre># Docker infra
+cd ~/Documents/Carrers/AI_Project/enterprise-ai-assistant
+docker-compose -f docker-compose.dev.yml up -d
+
+# Terminal 1 — Enterprise API
+cd backend && source venv/bin/activate
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+# Terminal 2 — Celery (required for uploads)
+celery -A app.workers.document_worker.celery_app worker \
+  --loglevel=info --concurrency=2 --queues=document_processing
+
+# Terminal 3 — Angular
+cd ../frontend && npm start
+
+# Terminal 4 — LangGraph
+cd ../langgraph-agent && source venv/bin/activate
+uvicorn app.main:app --host 0.0.0.0 --port 7860 --reload</pre>
+
+  <h3>Demo prompts</h3>
+  <table>
+    <thead><tr><th>Prompt</th><th>Expected path</th></tr></thead>
+    <tbody>
+      <tr><td>What are Neha Pukale's skills?</td><td>RAG (both UIs)</td></tr>
+      <tr><td>What are the latest AI trends in 2026?</td><td>LangGraph → web_search / Tavily</td></tr>
+      <tr><td>Should I use my documents or the internet for AI agents?</td><td>LangGraph → Human Gate</td></tr>
+      <tr><td>aaasdf qwerty 12345!!!</td><td>LangGraph → validator → END</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout ok">
+    <strong>Related docs in this repo:</strong>
+    <code>docs/hands-on/03-langgraph-agent-e2e.html</code>,
+    <code>docs/architecture/end-to-end-pipeline-technical.html</code>,
+    <code>langgraph-agent/README.md</code>
+  </div>
+</section>
+
+<div class="footer">
+  Saved at <span class="mono">docs/interviews/langchain-vs-langgraph-interview.html</span>
+  · Open in browser for rehearsal
+</div>
+
+</div>
+</body>
+</html>

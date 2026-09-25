@@ -1,0 +1,69 @@
+---
+# frontend/deployment.yaml — Angular + Nginx frontend Deployment.
+#
+# Key Kubernetes concepts here:
+#   Deployment: manages a ReplicaSet, which manages Pods.
+#   replicas: run 2 identical pods for high availability.
+#   selector: which Pods this Deployment manages.
+#   template: the Pod spec (what to run in each Pod).
+#   resources: CPU/memory requests and limits for scheduler.
+#   readinessProbe: when to start sending traffic to the Pod.
+#   livenessProbe: when to restart a failing Pod.
+#   rollingUpdate: zero-downtime deployments (new pods start before old ones stop).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: ai-assistant
+  labels:
+    app: frontend
+    app.kubernetes.io/name: enterprise-ai-assistant
+    app.kubernetes.io/component: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1          # allow 1 extra pod during rollout
+      maxUnavailable: 0    # never take pods down before new ones are ready
+
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: enterprise-ai-assistant/frontend:latest
+          imagePullPolicy: IfNotPresent  # use local image (for development)
+
+          ports:
+            - name: http
+              containerPort: 80
+
+          resources:
+            requests:
+              cpu: "100m"       # 0.1 CPU core
+              memory: "128Mi"
+            limits:
+              cpu: "500m"       # 0.5 CPU core
+              memory: "256Mi"
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 80
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3

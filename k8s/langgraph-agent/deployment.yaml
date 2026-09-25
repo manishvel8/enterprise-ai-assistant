@@ -1,0 +1,202 @@
+---
+# k8s/langgraph-agent/deployment.yaml — Kubernetes Deployment for the LangGraph Agent.
+#
+# KEY KUBERNETES CONCEPTS USED HERE:
+#
+#   Pod: Smallest deployable unit. Contains one or more containers.
+#        Like a "logical host" — containers in a pod share network and storage.
+#
+#   ReplicaSet: Ensures N pods are always running.
+#               If a pod crashes, ReplicaSet creates a new one.
+#
+#   Deployment: Manages ReplicaSets with rollout strategy.
+#               Rolling update: creates new pods before deleting old ones (zero downtime).
+#               Rollback: kubectl rollout undo deployment/langgraph-agent
+#
+#   Probes:
+#     startupProbe  → gives the slow-starting app time before liveness kicks in
+#     livenessProbe → if fails: restart the container
+#     readinessProbe → if fails: stop routing traffic to this pod
+#
+# LANGGRAPH-SPECIFIC NOTE:
+#   LangGraph uses a shared in-memory checkpointer (MemorySaver).
+#   Multiple replicas cannot share the same in-memory state.
+#   Use replicas=1 until PostgresSaver is implemented (section11-checkpointer).
+#   After PostgresSaver: conversation state is in Postgres → replicas can scale freely.
+#
+# Apply: kubectl apply -f k8s/langgraph-agent/deployment.yaml -n ai-assistant
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: langgraph-agent
+  namespace: ai-assistant
+  labels:
+    app: langgraph-agent
+    app.kubernetes.io/component: langgraph-agent
+    version: "1.0.0"
+  annotations:
+    # Used by CI/CD to track which image is running
+    deployment.kubernetes.io/revision: "1"
+spec:
+  # Start with 1 replica until durable checkpointer is enabled (see section11).
+  # With PostgresSaver: increase to 3+ for HA.
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: langgraph-agent
+
+  # ── Rolling Update Strategy ───────────────────────────────────────────────
+  # Zero-downtime deployment:
+  #   maxSurge: 1        → temporarily allow 1 extra pod during update
+  #   maxUnavailable: 0  → never have fewer than replicas running
+  # The sequence: create new pod → wait for healthy → delete old pod
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+  template:
+    metadata:
+      labels:
+        app: langgraph-agent
+      annotations:
+        # Prometheus scraping (picked up by Prometheus ServiceMonitor)
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "7860"
+        prometheus.io/path: "/metrics"
+    spec:
+      # ── Pod Security ────────────────────────────────────────────────────
+      securityContext:
+        runAsNonRoot: true           # Must run as non-root (matches Dockerfile USER appuser)
+        runAsUser: 1000
+        fsGroup: 1000
+
+      # ── Graceful termination ────────────────────────────────────────────
+      # Give the pod 30s to finish in-flight requests before killing it.
+      # This ensures conversations aren't cut off mid-generation.
+      terminationGracePeriodSeconds: 30
+
+      containers:
+        - name: langgraph-agent
+          image: enterprise-ai-assistant/langgraph-agent:latest
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http
+              containerPort: 7860
+              protocol: TCP
+
+          # ── Environment variables ───────────────────────────────────────
+          # Non-sensitive config from ConfigMap
+          envFrom:
+            - configMapRef:
+                name: langgraph-agent-config
+
+          # Sensitive values from Secret (never in ConfigMap!)
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-assistant-secrets
+                  key: OPENAI_API_KEY
+            - name: TAVILY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-assistant-secrets
+                  key: TAVILY_API_KEY
+                  optional: true    # Tavily is optional
+            - name: CONVERSATION_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ai-assistant-secrets
+                  key: POSTGRES_PASSWORD
+            - name: LANGFUSE_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-assistant-secrets
+                  key: LANGFUSE_PUBLIC_KEY
+                  optional: true
+            - name: LANGFUSE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-assistant-secrets
+                  key: LANGFUSE_SECRET_KEY
+                  optional: true
+
+          # ── Resource limits ─────────────────────────────────────────────
+          # requests: minimum guaranteed resources (used for scheduling)
+          # limits: maximum allowed (container killed/throttled if exceeded)
+          #
+          # LangGraph is memory-intensive because it holds graph state in memory.
+          # The LLM calls themselves happen via API (no GPU needed here).
+          resources:
+            requests:
+              cpu: "500m"       # 0.5 CPU core guaranteed
+              memory: "512Mi"   # 512MB RAM guaranteed
+            limits:
+              cpu: "2000m"      # 2 CPU cores maximum
+              memory: "2Gi"     # 2GB RAM maximum
+
+          # ── Startup Probe ───────────────────────────────────────────────
+          # WHAT: checks if the app finished starting up (model loading, DB init)
+          # WHY: LangGraph agent takes ~20s to start (imports, DB pool, graph compile)
+          #      Without startup probe, liveness probe fires too early → restart loop!
+          # WHEN: tries for up to failureThreshold × periodSeconds = 10 × 10s = 100s
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: 7860
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 10
+            successThreshold: 1
+
+          # ── Liveness Probe ──────────────────────────────────────────────
+          # WHAT: is the process alive and responsive?
+          # WHY: detects deadlocks/hangs that don't kill the process
+          # ACTION: kill and restart the container on failure
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 7860
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+            timeoutSeconds: 10
+
+          # ── Readiness Probe ─────────────────────────────────────────────
+          # WHAT: is the pod ready to serve traffic?
+          # WHY: stops traffic to pods that can't handle requests
+          #      (e.g., DB connection pool exhausted, LLM API overloaded)
+          # ACTION: remove pod from Service endpoints on failure
+          #         (pod stays running — kubernetes won't restart it)
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 7860
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            failureThreshold: 3
+            timeoutSeconds: 5
+
+      # ── Scheduling constraints ──────────────────────────────────────────
+      # Don't put two langgraph-agent pods on the same node.
+      # If a node fails, we still have a pod running on another node.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values: ["langgraph-agent"]
+                topologyKey: kubernetes.io/hostname
+
+      # ── Service Account ─────────────────────────────────────────────────
+      # Uses the default service account (no special K8s API access needed).
+      # In production, create a dedicated service account with minimal permissions.
+      serviceAccountName: default

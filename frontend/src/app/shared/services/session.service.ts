@@ -5,10 +5,8 @@
  *   Each conversation is a "session". The session_id links messages together
  *   so the backend can return conversation history and maintain context.
  *
- *   In this milestone: session IDs are generated in the browser and stored in
- *   localStorage so they survive page refreshes.
- *
- *   Later milestones will add proper user authentication and server-side sessions.
+ *   Session IDs are generated in the browser and stored in localStorage so
+ *   they survive page refreshes.
  */
 
 import { Injectable } from '@angular/core';
@@ -20,14 +18,36 @@ import { BehaviorSubject } from 'rxjs';
 export class SessionService {
   private readonly USER_ID_KEY = 'ai_user_id';
   private readonly SESSION_ID_KEY = 'ai_session_id';
+  private readonly SESSIONS_KEY = 'ai_sessions';
 
-  /** Observable list of all session IDs for the history sidebar. */
-  private sessionsSubject = new BehaviorSubject<string[]>(this.loadSessions());
-  sessions$ = this.sessionsSubject.asObservable();
+  private sessionsSubject: BehaviorSubject<string[]>;
+  sessions$;
 
-  /** The currently active session ID. */
-  private currentSessionSubject = new BehaviorSubject<string>(this.getOrCreateSession());
-  currentSession$ = this.currentSessionSubject.asObservable();
+  private currentSessionSubject: BehaviorSubject<string>;
+  currentSession$;
+
+  constructor() {
+    // Initialize subjects carefully — never call .next on a subject that
+    // is still being constructed (that blanked the Chat page).
+    const sessions = this.loadSessions();
+    let current = localStorage.getItem(this.SESSION_ID_KEY);
+
+    if (!current) {
+      current = 'session_' + this.generateId();
+      localStorage.setItem(this.SESSION_ID_KEY, current);
+    }
+
+    if (!sessions.includes(current)) {
+      sessions.unshift(current);
+      this.saveSessions(sessions.slice(0, 20));
+    }
+
+    this.sessionsSubject = new BehaviorSubject<string[]>(sessions.slice(0, 20));
+    this.sessions$ = this.sessionsSubject.asObservable();
+
+    this.currentSessionSubject = new BehaviorSubject<string>(current);
+    this.currentSession$ = this.currentSessionSubject.asObservable();
+  }
 
   get userId(): string {
     let id = localStorage.getItem(this.USER_ID_KEY);
@@ -45,13 +65,10 @@ export class SessionService {
   /** Start a new conversation session. */
   newSession(): string {
     const sessionId = 'session_' + this.generateId();
+    const sessions = [sessionId, ...this.sessionsSubject.value].slice(0, 20);
+    this.sessionsSubject.next(sessions);
+    this.saveSessions(sessions);
     this.currentSessionSubject.next(sessionId);
-    const sessions = this.sessionsSubject.value;
-    if (!sessions.includes(sessionId)) {
-      const updated = [sessionId, ...sessions].slice(0, 20); // keep last 20
-      this.sessionsSubject.next(updated);
-      this.saveSessions(updated);
-    }
     localStorage.setItem(this.SESSION_ID_KEY, sessionId);
     return sessionId;
   }
@@ -62,23 +79,9 @@ export class SessionService {
     localStorage.setItem(this.SESSION_ID_KEY, sessionId);
   }
 
-  private getOrCreateSession(): string {
-    const existing = localStorage.getItem(this.SESSION_ID_KEY);
-    if (existing) {
-      const sessions = this.sessionsSubject.value;
-      if (!sessions.includes(existing)) {
-        const updated = [existing, ...sessions].slice(0, 20);
-        this.sessionsSubject.next(updated);
-        this.saveSessions(updated);
-      }
-      return existing;
-    }
-    return this.newSession();
-  }
-
   private loadSessions(): string[] {
     try {
-      const raw = localStorage.getItem('ai_sessions');
+      const raw = localStorage.getItem(this.SESSIONS_KEY);
       return raw ? JSON.parse(raw) : [];
     } catch {
       return [];
@@ -86,7 +89,7 @@ export class SessionService {
   }
 
   private saveSessions(sessions: string[]): void {
-    localStorage.setItem('ai_sessions', JSON.stringify(sessions));
+    localStorage.setItem(this.SESSIONS_KEY, JSON.stringify(sessions));
   }
 
   private generateId(): string {

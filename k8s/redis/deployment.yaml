@@ -1,0 +1,70 @@
+---
+# redis/deployment.yaml — Redis Deployment (stateless, single replica).
+#
+# Why Deployment (not StatefulSet) for Redis?
+#   In a simple setup, Redis runs as a single instance.
+#   It doesn't need a stable hostname or persistent storage beyond
+#   what a Deployment with a PVC can provide.
+#
+#   For production HA Redis, use Redis Cluster or Redis Sentinel,
+#   or the Bitnami Redis Helm chart.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: ai-assistant
+  labels:
+    app: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          command: ["redis-server", "--appendonly", "yes"]
+
+          ports:
+            - containerPort: 6379
+
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+
+      volumes:
+        - name: redis-data
+          persistentVolumeClaim:
+            claimName: redis-pvc
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-pvc
+  namespace: ai-assistant
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi

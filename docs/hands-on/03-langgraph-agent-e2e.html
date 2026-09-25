@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>LangGraph + Enterprise AI — Hands-on E2E Guide</title>
+<style>
+:root {
+  --bg: #0b0f14;
+  --panel: #121820;
+  --panel2: #182029;
+  --line: #2a3544;
+  --text: #e8eef6;
+  --muted: #9aabbd;
+  --accent: #4ea1ff;
+  --green: #3ecf8e;
+  --yellow: #e6b84d;
+  --red: #f07178;
+  --purple: #c792ea;
+  --orange: #ff9e64;
+  --cyan: #7fdbca;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  background:
+    radial-gradient(1200px 600px at 10% -10%, #15304a 0%, transparent 55%),
+    radial-gradient(900px 500px at 100% 0%, #1a2a1f 0%, transparent 50%),
+    var(--bg);
+  color: var(--text);
+  line-height: 1.55;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.wrap { max-width: 1100px; margin: 0 auto; padding: 28px 20px 80px; }
+header {
+  border: 1px solid var(--line);
+  background: linear-gradient(135deg, #152033, #101820 60%);
+  border-radius: 16px;
+  padding: 28px 28px 22px;
+  margin-bottom: 22px;
+}
+header h1 { margin: 0 0 8px; font-size: 1.7rem; letter-spacing: -0.02em; }
+header p { margin: 0; color: var(--muted); max-width: 72ch; }
+.badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.badge {
+  font-size: 12px; padding: 4px 10px; border-radius: 999px;
+  border: 1px solid var(--line); background: #0f1620; color: var(--muted);
+}
+.badge.ok { border-color: #2e6b4f; color: var(--green); }
+.badge.warn { border-color: #6b5a2e; color: var(--yellow); }
+.badge.info { border-color: #2e4f6b; color: var(--accent); }
+
+nav.toc {
+  display: grid; gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  margin: 18px 0 28px;
+}
+nav.toc a {
+  display: block; padding: 12px 14px; border-radius: 10px;
+  background: var(--panel); border: 1px solid var(--line); color: var(--text);
+}
+nav.toc a span { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+
+section {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 22px 22px 18px;
+  margin-bottom: 18px;
+}
+section h2 {
+  margin: 0 0 12px;
+  font-size: 1.25rem;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 10px;
+}
+section h3 { margin: 18px 0 8px; font-size: 1.02rem; color: var(--cyan); }
+.muted { color: var(--muted); }
+.grid-2 { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
+@media (max-width: 800px) { .grid-2 { grid-template-columns: 1fr; } }
+
+.card {
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px;
+}
+.card h4 { margin: 0 0 8px; font-size: 0.95rem; }
+.card.need { border-color: #3d5a3a; }
+.card.skip { border-color: #4a3a3a; opacity: 0.95; }
+.card.warnbox { border-color: #6b5a2e; }
+
+table {
+  width: 100%; border-collapse: collapse; font-size: 0.92rem; margin: 10px 0;
+}
+th, td {
+  border: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top;
+}
+th { background: #152033; color: var(--muted); font-weight: 600; }
+td code, p code, li code {
+  background: #0c121a; border: 1px solid var(--line); border-radius: 4px;
+  padding: 1px 6px; font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.86em; color: #d7e6ff;
+}
+pre {
+  background: #0a1018;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.84rem;
+  line-height: 1.45;
+  color: #d5e4f7;
+}
+.cmd { position: relative; }
+.cmd .label {
+  position: absolute; top: 8px; right: 10px; font-size: 11px;
+  color: var(--yellow); background: #1a1508; border: 1px solid #4a3d1a;
+  padding: 1px 7px; border-radius: 999px;
+}
+
+.flow {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0;
+}
+.flow .n {
+  background: #142033; border: 1px solid #2f4d70; color: #b9d8ff;
+  padding: 7px 10px; border-radius: 8px; font-size: 0.85rem; font-weight: 600;
+}
+.flow .arr { color: var(--muted); }
+.flow .n.g { border-color: #2e6b4f; color: var(--green); background: #102218; }
+.flow .n.p { border-color: #5a3d6b; color: var(--purple); background: #1a1222; }
+.flow .n.y { border-color: #6b5a2e; color: var(--yellow); background: #1a1608; }
+
+.step {
+  border-left: 3px solid var(--accent);
+  padding: 10px 0 10px 14px;
+  margin: 12px 0;
+  background: linear-gradient(90deg, rgba(78,161,255,0.06), transparent);
+  border-radius: 0 8px 8px 0;
+}
+.step .num {
+  display: inline-block; min-width: 26px; height: 26px; line-height: 26px;
+  text-align: center; border-radius: 50%; background: var(--accent); color: #041018;
+  font-weight: 700; font-size: 0.85rem; margin-right: 8px;
+}
+.step .where {
+  display: inline-block; margin-top: 6px; font-size: 0.85rem;
+  color: var(--green); background: #102218; border: 1px solid #2e6b4f;
+  padding: 3px 8px; border-radius: 6px;
+}
+.callout {
+  border: 1px solid #2e4f6b; background: #101a26; border-radius: 10px;
+  padding: 12px 14px; margin: 12px 0; color: var(--muted);
+}
+.callout strong { color: var(--accent); }
+.callout.ok { border-color: #2e6b4f; background: #0f1a14; }
+.callout.ok strong { color: var(--green); }
+.callout.warn { border-color: #6b5a2e; background: #1a1608; }
+.callout.warn strong { color: var(--yellow); }
+.tech {
+  border: 1px dashed var(--line); border-radius: 10px; padding: 12px; margin-top: 8px;
+  background: #0d131b;
+}
+.tech summary { cursor: pointer; color: var(--purple); font-weight: 600; }
+.mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+.url-list li { margin: 6px 0; }
+.footer { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top: 28px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Hands-on E2E: Upload a Doc → Ask in LangGraph UI</h1>
+  <p>
+    Practical walkthrough: what Docker/processes you need, where to open each browser URL,
+    how document upload fills Qdrant, and how one chat prompt travels through all 7 LangGraph nodes.
+  </p>
+  <div class="badges">
+    <span class="badge ok">LangGraph :7860 already running</span>
+    <span class="badge ok">Docker infra already up</span>
+    <span class="badge info">Enterprise UI :4200</span>
+    <span class="badge info">Enterprise API :8000</span>
+    <span class="badge warn">Don’t start uvicorn again on 7860</span>
+  </div>
+</header>
+
+<nav class="toc">
+  <a href="#need">0. What must be running<span>Docker vs app processes</span></a>
+  <a href="#port">1. Port 7860 error<span>Already in use — fix</span></a>
+  <a href="#urls">2. Browser map<span>Every URL you open</span></a>
+  <a href="#upload">3. Upload one document<span>Hands-on in enterprise UI</span></a>
+  <a href="#verify">4. Verify storage<span>Postgres / Qdrant / MinIO / Neo4j</span></a>
+  <a href="#chat">5. Ask one prompt<span>LangGraph UI walkthrough</span></a>
+  <a href="#nodes">6. Technical path<span>Node-by-node processing</span></a>
+  <a href="#checklist">7. Quick checklist<span>Start / stop commands</span></a>
+</nav>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="need">
+  <h2>0. What must be running?</h2>
+  <p class="muted">
+    Short answer: <strong>Docker only for infra</strong>. LangGraph itself is a normal Python process.
+    You do <em>not</em> need a new Docker stack only for LangGraph.
+  </p>
+
+  <div class="grid-2">
+    <div class="card need">
+      <h4>Required for LangGraph chat (read docs)</h4>
+      <ul>
+        <li><strong>Docker:</strong> Qdrant (<code>:6333</code>) — vector search</li>
+        <li><strong>Process:</strong> LangGraph app (<code>:7860</code>)</li>
+        <li><strong>Config:</strong> <code>OPENAI_API_KEY</code> / gateway in <code>langgraph-agent/.env</code></li>
+      </ul>
+      <p class="muted" style="margin:8px 0 0">Optional: Tavily key for web-search path.</p>
+    </div>
+    <div class="card need">
+      <h4>Required only when uploading a new PDF</h4>
+      <ul>
+        <li><strong>Docker:</strong> Postgres, Redis, MinIO, Qdrant, Neo4j</li>
+        <li><strong>Process:</strong> Backend API (<code>:8000</code>)</li>
+        <li><strong>Process:</strong> Celery worker (PDF → chunks → embed)</li>
+        <li><strong>Process:</strong> Angular UI (<code>:4200</code>) — upload screen</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Your machine right now (from earlier session)</h3>
+  <table>
+    <thead><tr><th>Service</th><th>Port</th><th>Status</th><th>Needed for</th></tr></thead>
+    <tbody>
+      <tr><td>Docker Postgres</td><td>5433</td><td>Up</td><td>Upload + metadata</td></tr>
+      <tr><td>Docker Redis</td><td>6379</td><td>Up</td><td>Celery queue (upload)</td></tr>
+      <tr><td>Docker Qdrant</td><td>6333</td><td>Up</td><td>Upload + LangGraph RAG</td></tr>
+      <tr><td>Docker MinIO</td><td>9000 / 9001</td><td>Up</td><td>PDF file storage</td></tr>
+      <tr><td>Docker Neo4j</td><td>7474 / 7687</td><td>Up</td><td>GraphRAG (enterprise)</td></tr>
+      <tr><td>Enterprise API</td><td>8000</td><td>Up</td><td>Upload API</td></tr>
+      <tr><td>Angular UI</td><td>4200</td><td>Up</td><td>Upload + enterprise chat</td></tr>
+      <tr><td>LangGraph app</td><td>7860</td><td>Up (PID already listening)</td><td>Agentic chat UI</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout ok">
+    <strong>Bottom line:</strong> For today’s hands-on you likely only need to
+    <em>open browsers</em> — Docker + APIs are already up. Do not restart LangGraph on 7860 until you stop the old process.
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="port">
+  <h2>1. Why <code>Address already in use</code> on 7860?</h2>
+  <p>
+    Your terminal error means LangGraph is <strong>already running</strong> (started earlier in this project).
+    Starting <code>uvicorn ... --port 7860</code> again fails because the port is taken.
+  </p>
+
+  <div class="grid-2">
+    <div class="card">
+      <h4>Option A — Just use it (recommended)</h4>
+      <p>Open: <a href="http://localhost:7860" target="_blank">http://localhost:7860</a></p>
+      <div class="cmd">
+        <span class="label">check</span>
+<pre>curl -s http://localhost:7860/api/health | python3 -m json.tool</pre>
+      </div>
+    </div>
+    <div class="card warnbox">
+      <h4>Option B — Kill old process, then restart</h4>
+      <div class="cmd">
+        <span class="label">terminal</span>
+<pre># find + kill process on 7860
+fuser -k 7860/tcp
+# or:
+# kill $(lsof -t -i:7860)
+
+cd ~/Documents/Carrers/AI_Project/enterprise-ai-assistant/langgraph-agent
+source venv/bin/activate
+uvicorn app.main:app --host 0.0.0.0 --port 7860 --reload</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="urls">
+  <h2>2. Browser map — open these tabs</h2>
+  <table>
+    <thead><tr><th>#</th><th>URL</th><th>What you see / do</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td><a href="http://localhost:4200/documents" target="_blank">http://localhost:4200/documents</a></td>
+        <td>Upload PDF (enterprise Angular UI)</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td><a href="http://localhost:8000/docs" target="_blank">http://localhost:8000/docs</a></td>
+        <td>Enterprise API Swagger — optional check upload/list</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td><a href="http://localhost:6333/dashboard" target="_blank">http://localhost:6333/dashboard</a></td>
+        <td>Qdrant — collection <code>chunks</code>, point count after upload</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td><a href="http://localhost:9001" target="_blank">http://localhost:9001</a></td>
+        <td>MinIO console — bucket <code>ai-documents</code> (login <code>minioadmin</code> / <code>minioadmin</code>)</td>
+      </tr>
+      <tr>
+        <td>5</td>
+        <td><a href="http://localhost:7474" target="_blank">http://localhost:7474</a></td>
+        <td>Neo4j Browser — graph nodes (login <code>neo4j</code> / <code>dev_password</code>)</td>
+      </tr>
+      <tr>
+        <td>6</td>
+        <td><a href="http://localhost:7860" target="_blank"><strong>http://localhost:7860</strong></a></td>
+        <td><strong>LangGraph UI</strong> — ask prompt, watch 7 nodes, trace, state</td>
+      </tr>
+      <tr>
+        <td>7</td>
+        <td><a href="http://localhost:7860/docs" target="_blank">http://localhost:7860/docs</a></td>
+        <td>LangGraph FastAPI docs</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <strong>Two chat UIs:</strong>
+    <code>:4200/chat</code> = original enterprise multi-agent chat.
+    <code>:7860</code> = new LangGraph 7-node agentic workflow (this guide focuses here).
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="upload">
+  <h2>3. Hands-on: upload one document</h2>
+  <p class="muted">Goal: put a PDF into MinIO + Postgres + Qdrant so LangGraph RAG can retrieve it.</p>
+
+  <div class="flow">
+    <span class="n">UI Upload</span><span class="arr">→</span>
+    <span class="n">API :8000</span><span class="arr">→</span>
+    <span class="n">MinIO + Postgres</span><span class="arr">→</span>
+    <span class="n">Celery worker</span><span class="arr">→</span>
+    <span class="n">Parse → Chunk → Embed</span><span class="arr">→</span>
+    <span class="n g">Qdrant chunks</span>
+  </div>
+
+  <div class="step">
+    <span class="num">1</span>
+    <strong>Open Documents page</strong>
+    <div>Browser → <a href="http://localhost:4200/documents" target="_blank">http://localhost:4200/documents</a></div>
+    <div class="where">Where: Angular Documents page</div>
+  </div>
+
+  <div class="step">
+    <span class="num">2</span>
+    <strong>Upload a PDF</strong>
+    <div>Choose a resume/CV PDF (e.g. <code>Resume_BhanuTeja_DS.pdf</code>). Wait until status becomes <strong>complete</strong> and chunk count &gt; 0.</div>
+    <div class="where">Where: same Documents table — status column</div>
+  </div>
+
+  <div class="step">
+    <span class="num">3</span>
+    <strong>If status stuck on processing</strong>
+    <div>Celery worker must be running. In a terminal:</div>
+    <div class="cmd">
+      <span class="label">Terminal — Celery</span>
+<pre>cd ~/Documents/Carrers/AI_Project/enterprise-ai-assistant/backend
+source venv/bin/activate
+celery -A app.workers.document_worker.celery_app worker \
+  --loglevel=info --concurrency=2 --queues=document_processing</pre>
+    </div>
+    <div class="where">Where: worker terminal logs — Parsing → Chunking → Embedding → Stored</div>
+  </div>
+
+  <div class="callout warn">
+    <strong>Important:</strong> LangGraph does <em>not</em> upload documents itself.
+    It only <em>reads</em> the shared Qdrant collection <code>chunks</code> that the enterprise pipeline fills.
+  </div>
+
+  <details class="tech">
+    <summary>Technical: what happens on upload</summary>
+    <ol>
+      <li><code>POST /api/documents/upload</code> stores file in MinIO key <code>documents/{doc_id}/original.pdf</code></li>
+      <li>Inserts row in Postgres <code>documents</code> with status <code>pending</code></li>
+      <li>Enqueues Celery task on Redis queue <code>document_processing</code></li>
+      <li>Worker: PyMuPDF parse → clean → tiktoken chunk (800/100) → embed → Qdrant upsert</li>
+      <li>Optional: Neo4j GraphRAG nodes (Document / Chunk / Person / Org)</li>
+      <li>Status → <code>complete</code>, <code>chunk_count</code> updated</li>
+    </ol>
+  </details>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="verify">
+  <h2>4. Hands-on: verify the document landed everywhere</h2>
+
+  <div class="step">
+    <span class="num">1</span>
+    <strong>Qdrant dashboard</strong>
+    <div>Open <a href="http://localhost:6333/dashboard" target="_blank">http://localhost:6333/dashboard</a> → collection <code>chunks</code> → confirm points increased.</div>
+    <div class="cmd">
+      <span class="label">CLI</span>
+<pre>curl -s http://localhost:6333/collections/chunks | python3 -m json.tool | grep -E 'points_count|status'</pre>
+    </div>
+    <div class="where">Where: Qdrant UI / health JSON — points_count</div>
+  </div>
+
+  <div class="step">
+    <span class="num">2</span>
+    <strong>MinIO object</strong>
+    <div>Open <a href="http://localhost:9001" target="_blank">http://localhost:9001</a> → login <code>minioadmin</code> / <code>minioadmin</code> → bucket <code>ai-documents</code> → folder <code>documents/…</code></div>
+    <div class="where">Where: MinIO browser object list</div>
+  </div>
+
+  <div class="step">
+    <span class="num">3</span>
+    <strong>Postgres rows</strong>
+    <div class="cmd">
+      <span class="label">psql</span>
+<pre>PGPASSWORD=dev_password psql -h localhost -p 5433 -U ai_user -d ai_assistant -c \
+  "SELECT id, file_name, status, chunk_count FROM documents ORDER BY created_at DESC LIMIT 5;"</pre>
+    </div>
+    <div class="where">Where: terminal psql output</div>
+  </div>
+
+  <div class="step">
+    <span class="num">4</span>
+    <strong>Neo4j (optional)</strong>
+    <div>Open <a href="http://localhost:7474" target="_blank">http://localhost:7474</a> → login <code>neo4j</code> / <code>dev_password</code></div>
+    <div class="cmd">
+      <span class="label">Cypher</span>
+<pre>MATCH (d:Document) RETURN d LIMIT 10;
+MATCH (c:Chunk) RETURN count(c);</pre>
+    </div>
+    <div class="where">Where: Neo4j Browser graph / table</div>
+  </div>
+
+  <div class="step">
+    <span class="num">5</span>
+    <strong>LangGraph health sees same collection</strong>
+    <div class="cmd">
+      <span class="label">LangGraph</span>
+<pre>curl -s http://localhost:7860/api/health | python3 -m json.tool</pre>
+    </div>
+    <div class="where">Where: <code>services.qdrant.points_count</code> should match Qdrant</div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="chat">
+  <h2>5. Hands-on: ask one prompt in LangGraph UI</h2>
+
+  <div class="step">
+    <span class="num">1</span>
+    <strong>Open LangGraph UI</strong>
+    <div><a href="http://localhost:7860" target="_blank"><strong>http://localhost:7860</strong></a></div>
+    <div class="where">Where: left = Agent Graph + Trace · center = Chat · right = State Inspector</div>
+  </div>
+
+  <div class="step">
+    <span class="num">2</span>
+    <strong>Type a document question</strong>
+    <div>Example prompt:</div>
+<pre>What are Bhanu Teja's skills and work experience?</pre>
+    <div>Click <strong>Send</strong>.</div>
+  </div>
+
+  <div class="step">
+    <span class="num">3</span>
+    <strong>Watch the UI update live (SSE)</strong>
+    <ul>
+      <li><strong>Left graph:</strong> nodes turn yellow (running) → green (completed)</li>
+      <li><strong>Execution Trace:</strong> each node appends input/output + duration ms</li>
+      <li><strong>Right State Inspector:</strong> route, RAG chunk count, draft answer, quality score</li>
+      <li><strong>Center chat:</strong> final answer with source tags when done</li>
+    </ul>
+    <div class="where">Where: all three panels update without page refresh</div>
+  </div>
+
+  <div class="step">
+    <span class="num">4</span>
+    <strong>Click a node card</strong>
+    <div>Opens modal with description + last input/output summary for that node.</div>
+  </div>
+
+  <div class="step">
+    <span class="num">5</span>
+    <strong>Try other paths with these prompts</strong>
+    <table>
+      <thead><tr><th>Prompt</th><th>Expected path</th><th>What to watch</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>What is in the uploaded resume for education?</code></td>
+          <td>RAG</td>
+          <td>Router → rag · RAG Retriever green · chunks &gt; 0</td>
+        </tr>
+        <tr>
+          <td><code>What are the latest AI trends in 2026?</code></td>
+          <td>Web search</td>
+          <td>Router → web_search · Web Searcher runs (needs Tavily key)</td>
+        </tr>
+        <tr>
+          <td><code>Should I use my documents or the internet for AI agents?</code></td>
+          <td>Human gate</td>
+          <td>Purple Human Gate panel appears · answer · resume</td>
+        </tr>
+        <tr>
+          <td><code>aaasdf qwerty 12345!!!</code></td>
+          <td>Invalid → END</td>
+          <td>Only Query Validator runs · is_valid=false</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout">
+    <strong>Browser DevTools (optional):</strong> Network tab → filter <code>chat</code> → EventStream.
+    You will see SSE frames: <code>started</code>, <code>node_update</code>, <code>final</code>, <code>done</code>.
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="nodes">
+  <h2>6. Technical: how one prompt is processed E2E</h2>
+
+  <div class="flow">
+    <span class="n">1 Validator</span><span class="arr">→</span>
+    <span class="n">2 Router</span><span class="arr">→</span>
+    <span class="n g">3 RAG</span><span class="arr">/</span>
+    <span class="n">3 Web</span><span class="arr">/</span>
+    <span class="n p">3 Human</span><span class="arr">→</span>
+    <span class="n">6 Generator</span><span class="arr">→</span>
+    <span class="n y">7 Quality</span><span class="arr">→</span>
+    <span class="n g">END</span>
+  </div>
+
+  <h3>Example: “What are Bhanu Teja's skills and experience?”</h3>
+
+  <table>
+    <thead>
+      <tr><th>Step</th><th>Node</th><th>What happens (technical)</th><th>Where you see it</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>0</td>
+        <td>UI → API</td>
+        <td><code>POST /api/chat</code> with query. FastAPI starts <code>graph.astream()</code>, returns SSE.</td>
+        <td>DevTools Network EventStream; UI “Initialising…”</td>
+      </tr>
+      <tr>
+        <td>1</td>
+        <td><code>query_validator</code></td>
+        <td>Structured LLM call → <code>is_valid</code>, <code>sanitized_query</code>. Gibberish/injection → END.</td>
+        <td>Graph node green; Trace; State: validated_query</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td><code>router</code></td>
+        <td>Heuristics (resume/skills → rag) else LLM route: <code>rag | web_search | needs_human</code>.</td>
+        <td>Route badge “📚 RAG”; State: route</td>
+      </tr>
+      <tr>
+        <td>3a</td>
+        <td><code>rag_retriever</code></td>
+        <td>Embed query (<code>text-embedding-3-small</code>) → Qdrant cosine search top_k=5, threshold 0.25 → chunks.</td>
+        <td>Trace “Retrieved N chunks”; State: RAG Chunks</td>
+      </tr>
+      <tr>
+        <td>3b</td>
+        <td><code>web_searcher</code></td>
+        <td>(other path) Tavily search → titles/URLs/snippets.</td>
+        <td>Web Searcher node; State: Web Results</td>
+      </tr>
+      <tr>
+        <td>3c</td>
+        <td><code>human_gate</code></td>
+        <td>(other path) <code>interrupt()</code> saves state; SSE <code>interrupt</code>; UI asks human; <code>POST /api/chat/resume</code>.</td>
+        <td>Purple Human Gate panel</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td><code>response_generator</code></td>
+        <td>Builds numbered evidence from chunks → GPT-4o answer with <code>[Source N]</code> citations.</td>
+        <td>State: Draft Answer</td>
+      </tr>
+      <tr>
+        <td>5</td>
+        <td><code>quality_checker</code></td>
+        <td>LLM-as-judge: grounded + complete. <code>PASS</code> → END. <code>REVISE</code> → generator again (max 3).</td>
+        <td>Quality bar %; Trace verdict; final chat bubble</td>
+      </tr>
+      <tr>
+        <td>6</td>
+        <td>SSE <code>final</code></td>
+        <td>API reads checkpointer snapshot → answer, sources, quality_score, full execution_trace.</td>
+        <td>Center assistant message + source tags</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Shared state (whiteboard every node writes to)</h3>
+  <pre>AgentState {
+  original_query, validated_query, validation_result,
+  route, route_reasoning,
+  retrieved_documents[], web_results[],
+  human_question, human_input,
+  evidence, sources[], generated_response,
+  quality_result, retry_count, max_retries,
+  final_answer, is_complete,
+  execution_trace[], errors[]
+}</pre>
+
+  <h3>Human-in-the-loop (resume)</h3>
+  <pre># Pause inside human_gate
+human_response = interrupt({"question": "Docs or web?"})
+
+# UI submits → API
+Command(resume=human_input)  # same thread_id
+# Graph continues from the exact interrupt line</pre>
+
+  <div class="callout ok">
+    <strong>Integration fact:</strong> LangGraph and enterprise app share Qdrant collection <code>chunks</code>.
+    Upload once in <code>:4200</code> → ask forever in <code>:7860</code>.
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="checklist">
+  <h2>7. Start / stop checklist (when you reboot)</h2>
+
+  <h3>A. Infra (Docker) — once</h3>
+  <div class="cmd">
+    <span class="label">from repo root</span>
+<pre>cd ~/Documents/Carrers/AI_Project/enterprise-ai-assistant
+docker-compose -f docker-compose.dev.yml up -d
+docker-compose -f docker-compose.dev.yml ps</pre>
+  </div>
+
+  <h3>B. Upload stack — 3 terminals (only if uploading)</h3>
+  <div class="cmd">
+    <span class="label">Terminal 1 — API</span>
+<pre>cd ~/Documents/Carrers/AI_Project/enterprise-ai-assistant/backend
+source venv/bin/activate
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000</pre>
+  </div>
+  <div class="cmd">
+    <span class="label">Terminal 2 — Celery (required for PDF processing)</span>
+<pre>cd ~/Documents/Carrers/AI_Project/enterprise-ai-assistant/backend
+source venv/bin/activate
+celery -A app.workers.document_worker.celery_app worker \
+  --loglevel=info --concurrency=2 --queues=document_processing</pre>
+  </div>
+  <div class="cmd">
+    <span class="label">Terminal 3 — Angular</span>
+<pre>cd ~/Documents/Carrers/AI_Project/enterprise-ai-assistant/frontend
+npm start</pre>
+  </div>
+
+  <h3>C. LangGraph — 1 terminal</h3>
+  <div class="cmd">
+    <span class="label">Terminal 4 — LangGraph</span>
+<pre>cd ~/Documents/Carrers/AI_Project/enterprise-ai-assistant/langgraph-agent
+source venv/bin/activate
+# if port busy: fuser -k 7860/tcp
+uvicorn app.main:app --host 0.0.0.0 --port 7860 --reload</pre>
+  </div>
+
+  <h3>Minimal path if docs already indexed</h3>
+  <div class="card need">
+    <p><strong>Only need:</strong> Docker Qdrant + LangGraph on <code>:7860</code>.</p>
+    <p class="muted">Postgres/Redis/MinIO/Celery/Angular are not required just to ask questions against existing vectors.</p>
+  </div>
+
+  <h3>Credentials cheat-sheet</h3>
+  <table>
+    <thead><tr><th>System</th><th>URL</th><th>Login</th></tr></thead>
+    <tbody>
+      <tr><td>MinIO</td><td>http://localhost:9001</td><td>minioadmin / minioadmin</td></tr>
+      <tr><td>Neo4j</td><td>http://localhost:7474</td><td>neo4j / dev_password</td></tr>
+      <tr><td>Postgres</td><td>localhost:5433</td><td>ai_user / dev_password · db ai_assistant</td></tr>
+      <tr><td>Qdrant</td><td>http://localhost:6333/dashboard</td><td>(none locally)</td></tr>
+      <tr><td>LangGraph</td><td>http://localhost:7860</td><td>(none)</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<div class="footer">
+  Saved at <span class="mono">docs/hands-on/03-langgraph-agent-e2e.html</span> ·
+  Open file in browser or serve from docs folder
+</div>
+
+</div>
+</body>
+</html>

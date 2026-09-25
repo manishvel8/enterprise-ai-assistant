@@ -1,0 +1,26 @@
+---
+# frontend/service.yaml — ClusterIP Service for the Angular frontend.
+#
+# Service types:
+#   ClusterIP: internal only (default) — exposed via Ingress
+#   NodePort:  opens a port on each node (simple but not for prod)
+#   LoadBalancer: creates a cloud LB (expensive for many services)
+#
+# We use ClusterIP here because the Ingress handles external traffic.
+# The Ingress maps public requests to this Service.
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  namespace: ai-assistant
+  labels:
+    app: frontend
+spec:
+  type: ClusterIP
+  selector:
+    app: frontend     # Route to Pods with this label
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80          # port on the Service
+      targetPort: 80    # port on the container

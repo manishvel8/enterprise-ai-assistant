@@ -48,7 +48,12 @@ def get_openai_client() -> AsyncOpenAI:
                 "OPENAI_API_KEY is not set. "
                 "Add it to your .env file: OPENAI_API_KEY=sk-..."
             )
-        _client = AsyncOpenAI(api_key=settings.openai_api_key)
+        kwargs = {"api_key": settings.openai_api_key}
+        # Support OpenAI-compatible gateways (Azure-style proxies, LiteLLM, vLLM, etc.)
+        if settings.openai_api_base:
+            kwargs["base_url"] = settings.openai_api_base.rstrip("/")
+            logger.info(f"OpenAI client using custom base_url: {kwargs['base_url']}")
+        _client = AsyncOpenAI(**kwargs)
     return _client
 
 

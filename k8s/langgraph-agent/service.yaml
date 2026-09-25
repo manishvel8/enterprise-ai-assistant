@@ -1,0 +1,48 @@
+---
+# k8s/langgraph-agent/service.yaml — Kubernetes Service for the LangGraph Agent.
+#
+# WHAT IS A SERVICE?
+#   A Service is a stable network address for a group of Pods.
+#   Pods get random IPs that change when they restart.
+#   A Service has a fixed ClusterIP (or DNS name) that doesn't change.
+#
+#   Without Service: frontend must hardcode pod IPs → breaks on pod restart.
+#   With Service: frontend calls "langgraph-agent-service:7860" always works.
+#
+# SERVICE TYPES:
+#   ClusterIP (default) → accessible only within the cluster (what we use here)
+#   NodePort            → accessible from outside on a node's IP:port
+#   LoadBalancer        → provisions a cloud load balancer (AWS ELB, GCP LB)
+#
+# TRAFFIC FLOW:
+#   Ingress → langgraph-agent-service (ClusterIP:7860)
+#                  ↓ (kube-proxy load balances)
+#            Pod 1 | Pod 2 | Pod 3
+#
+# Apply: kubectl apply -f k8s/langgraph-agent/service.yaml -n ai-assistant
+apiVersion: v1
+kind: Service
+metadata:
+  name: langgraph-agent-service
+  namespace: ai-assistant
+  labels:
+    app: langgraph-agent
+    app.kubernetes.io/component: langgraph-agent
+  annotations:
+    # Prometheus auto-discovery (used by ServiceMonitor CRD)
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "7860"
+spec:
+  # ClusterIP: stable virtual IP accessible within the cluster only.
+  # The Ingress routes external traffic to this Service.
+  type: ClusterIP
+
+  # Routes traffic to pods with label app=langgraph-agent
+  selector:
+    app: langgraph-agent
+
+  ports:
+    - name: http
+      port: 7860          # Service port (what other services call)
+      targetPort: 7860    # Pod port (what the container listens on)
+      protocol: TCP

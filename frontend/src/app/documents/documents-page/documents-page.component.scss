@@ -7,6 +7,9 @@
   display: flex;
   flex-direction: column;
   gap: 24px;
+  background: var(--bg-primary, #0f0f0f);
+  color: var(--text-primary, #f0f0f0);
+  min-height: calc(100vh - 56px - 40px);
 }
 
 /* ─── Page Header ─── */

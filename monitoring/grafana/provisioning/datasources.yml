@@ -1,0 +1,15 @@
+---
+# grafana/provisioning/datasources.yml
+# Automatically configures the Prometheus data source in Grafana on startup.
+# Without this, you'd need to manually add the data source via the Grafana UI each time.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy           # Grafana container calls Prometheus (not the browser)
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      timeInterval: "15s"   # matches prometheus.yml scrape_interval
+      httpMethod: POST

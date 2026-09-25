@@ -1,0 +1,16 @@
+---
+# grafana/provisioning/dashboards.yml
+# Tells Grafana where to find pre-built dashboard JSON files.
+# On startup, Grafana loads all .json files from the specified path.
+apiVersion: 1
+
+providers:
+  - name: "enterprise-ai-assistant"
+    orgId: 1
+    folder: "Enterprise AI Assistant"
+    type: file
+    disableDeletion: false      # allow deleting dashboards from UI
+    editable: true
+    updateIntervalSeconds: 10
+    options:
+      path: /etc/grafana/dashboards   # where dashboard JSON files live in the container

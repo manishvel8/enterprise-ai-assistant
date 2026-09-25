@@ -1,0 +1,92 @@
+---
+# neo4j/statefulset.yaml — Neo4j StatefulSet.
+#
+# Neo4j Community Edition runs as a single instance.
+# Enterprise Edition supports causal clustering (multi-node).
+# For production scale, use the Neo4j Helm chart.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: neo4j
+  namespace: ai-assistant
+  labels:
+    app: neo4j
+spec:
+  serviceName: "neo4j-service"
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: neo4j
+
+  template:
+    metadata:
+      labels:
+        app: neo4j
+    spec:
+      containers:
+        - name: neo4j
+          image: neo4j:5-community
+
+          ports:
+            - name: bolt
+              containerPort: 7687     # Bolt protocol (client connections)
+            - name: http
+              containerPort: 7474     # Neo4j Browser (web UI)
+
+          env:
+            - name: NEO4J_AUTH
+              value: "neo4j/$(NEO4J_PASSWORD)"   # "user/password" format
+            - name: NEO4J_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ai-assistant-secrets
+                  key: NEO4J_PASSWORD
+            - name: NEO4J_PLUGINS
+              value: '["apoc"]'    # APOC: A Package Of Component utilities
+            - name: NEO4J_dbms_memory_heap_initial__size
+              value: "512m"
+            - name: NEO4J_dbms_memory_heap_max__size
+              value: "1G"
+            - name: NEO4J_dbms_memory_pagecache_size
+              value: "512m"
+
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2000m"
+              memory: "3Gi"
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 7474
+            initialDelaySeconds: 30
+            periodSeconds: 15
+
+          volumeMounts:
+            - name: neo4j-data
+              mountPath: /data
+            - name: neo4j-logs
+              mountPath: /logs
+
+  volumeClaimTemplates:
+    - metadata:
+        name: neo4j-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 20Gi
+
+    - metadata:
+        name: neo4j-logs
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 5Gi

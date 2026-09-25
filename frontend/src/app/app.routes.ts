@@ -1,14 +1,14 @@
 /**
  * app.routes.ts — Top-level application routes.
  *
- * Lazy loading: each feature module is only downloaded when the user navigates
- * to that route. This keeps the initial bundle small.
+ * Uses loadComponent (standalone) so pages mount reliably on Angular 19.
+ * NgModule loadChildren left the /chat outlet empty in the browser.
  *
  * Route structure:
  *   /          → redirect to /chat
- *   /chat      → Chat page (lazy loaded from ChatModule)
- *   /documents → Documents upload + library (lazy loaded from DocumentsModule)
- *   **         → redirect to /chat (catch-all for unknown URLs)
+ *   /chat      → Chat page
+ *   /documents → Documents upload + library
+ *   **         → redirect to /chat
  */
 import { Routes } from '@angular/router';
 
@@ -20,13 +20,17 @@ export const routes: Routes = [
   },
   {
     path: 'chat',
-    loadChildren: () =>
-      import('./chat/chat.module').then((m) => m.ChatModule),
+    loadComponent: () =>
+      import('./chat/chat-page/chat-page.component').then(
+        (m) => m.ChatPageComponent,
+      ),
   },
   {
     path: 'documents',
-    loadChildren: () =>
-      import('./documents/documents.module').then((m) => m.DocumentsModule),
+    loadComponent: () =>
+      import('./documents/documents-page/documents-page.component').then(
+        (m) => m.DocumentsPageComponent,
+      ),
   },
   {
     path: '**',

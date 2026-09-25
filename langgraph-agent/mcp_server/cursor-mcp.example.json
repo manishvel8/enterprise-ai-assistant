@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "enterprise-rag": {
+      "command": "/home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/langgraph-agent/venv/bin/python",
+      "args": [
+        "-m",
+        "mcp_server.server",
+        "--transport",
+        "stdio"
+      ],
+      "cwd": "/home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/langgraph-agent",
+      "env": {
+        "OPENAI_API_KEY": "copy-from-langgraph-agent-.env",
+        "OPENAI_API_BASE": "copy-from-langgraph-agent-.env-if-any",
+        "TAVILY_API_KEY": "copy-from-langgraph-agent-.env",
+        "QDRANT_URL": "http://localhost:6333",
+        "QDRANT_COLLECTION": "chunks"
+      }
+    }
+  }
+}

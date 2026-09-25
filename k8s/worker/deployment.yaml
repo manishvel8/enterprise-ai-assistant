@@ -1,0 +1,79 @@
+---
+# worker/deployment.yaml — Celery worker Deployment.
+#
+# The worker is stateless (like the backend) but CPU-intensive.
+# Document processing (parsing, embedding) can spike CPU to 100%.
+# HPA scales workers based on CPU to handle document upload bursts.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: ai-assistant
+  labels:
+    app: worker
+    app.kubernetes.io/component: worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: worker
+
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      containers:
+        - name: worker
+          image: enterprise-ai-assistant/worker:latest
+          imagePullPolicy: IfNotPresent
+
+          command:
+            - celery
+            - -A
+            - app.workers.document_worker.celery_app
+            - worker
+            - --loglevel=info
+            - --queues=document_processing
+            - --concurrency=2   # 2 tasks per worker pod
+
+          envFrom:
+            - configMapRef:
+                name: ai-assistant-config
+
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-assistant-secrets
+                  key: OPENAI_API_KEY
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: ai-assistant-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ai-assistant-secrets
+                  key: POSTGRES_PASSWORD
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-assistant-secrets
+                  key: MINIO_ACCESS_KEY
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-assistant-secrets
+                  key: MINIO_SECRET_KEY
+            - name: DATABASE_URL
+              value: "postgresql+asyncpg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
+
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2000m"      # Workers can use 2 full CPUs for embedding/parsing
+              memory: "2Gi"

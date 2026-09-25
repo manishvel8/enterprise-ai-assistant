@@ -1,0 +1,1143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>LangGraph Agentic RAG</title>
+<style>
+/* ══════════════════════════════════════════════════════════════════
+   DESIGN SYSTEM
+   ══════════════════════════════════════════════════════════════════ */
+:root {
+  --bg-0: #0d1117;
+  --bg-1: #161b22;
+  --bg-2: #21262d;
+  --bg-3: #30363d;
+  --border: #30363d;
+  --text-0: #f0f6fc;
+  --text-1: #c9d1d9;
+  --text-2: #8b949e;
+  --accent:  #58a6ff;
+  --green:   #3fb950;
+  --yellow:  #d29922;
+  --red:     #f85149;
+  --purple:  #bc8cff;
+  --orange:  #e3b341;
+  --radius:  8px;
+  --shadow:  0 2px 12px rgba(0,0,0,.45);
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+  background: var(--bg-0);
+  color: var(--text-0);
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Header ── */
+header {
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+header h1 { font-size: 16px; color: var(--text-0); font-weight: 600; }
+header .badge {
+  font-size: 11px; padding: 2px 8px; border-radius: 20px;
+  background: var(--bg-3); color: var(--accent); border: 1px solid var(--accent);
+}
+#health-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--text-2); margin-left: auto; transition: background 0.3s;
+}
+#health-dot.ok { background: var(--green); }
+#health-dot.err { background: var(--red); }
+
+/* ── Layout ── */
+.workspace {
+  display: grid;
+  grid-template-columns: 340px 1fr 320px;
+  grid-template-rows: 1fr;
+  height: calc(100vh - 49px);
+  overflow: hidden;
+}
+
+/* ── Left panel: Graph + Trace ── */
+.left-panel {
+  background: var(--bg-1);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Centre panel: Chat ── */
+.centre-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Right panel: State inspector ── */
+.right-panel {
+  background: var(--bg-1);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Panel headers ── */
+.panel-header {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: .8px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.panel-header .icon { font-size: 14px; }
+
+/* ── Scrollable containers ── */
+.scrollable { overflow-y: auto; flex: 1; }
+.scrollable::-webkit-scrollbar { width: 4px; }
+.scrollable::-webkit-scrollbar-thumb { background: var(--bg-3); border-radius: 2px; }
+
+/* ══════════════════════════════════════════════════════════════════
+   GRAPH VISUALISATION
+   ══════════════════════════════════════════════════════════════════ */
+#graph-container {
+  padding: 16px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+.graph-title {
+  font-size: 11px; font-weight: 600; color: var(--text-2);
+  margin-bottom: 12px; text-transform: uppercase; letter-spacing: .6px;
+}
+
+/* ── Node cards in the graph ── */
+.graph-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.graph-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 4px;
+  justify-content: center;
+}
+.node-card {
+  background: var(--bg-2);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  padding: 7px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: center;
+  min-width: 110px;
+  position: relative;
+  color: var(--text-1);
+}
+.node-card:hover { border-color: var(--accent); color: var(--accent); }
+.node-card.state-running {
+  border-color: var(--yellow);
+  background: rgba(210, 153, 34, 0.12);
+  color: var(--yellow);
+  animation: pulse 1s infinite;
+}
+.node-card.state-completed {
+  border-color: var(--green);
+  background: rgba(63, 185, 80, 0.08);
+  color: var(--green);
+}
+.node-card.state-failed {
+  border-color: var(--red);
+  background: rgba(248, 81, 73, 0.1);
+  color: var(--red);
+}
+.node-card.state-interrupted {
+  border-color: var(--purple);
+  background: rgba(188, 140, 255, 0.1);
+  color: var(--purple);
+  animation: pulse 1.5s infinite;
+}
+.node-card.state-waiting { color: var(--text-2); }
+.node-card .node-icon { font-size: 14px; display: block; margin-bottom: 2px; }
+.node-card .node-dur {
+  font-size: 9px; font-weight: 400; color: var(--text-2); margin-top: 2px;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .6; }
+}
+
+/* ── Arrows ── */
+.arrow {
+  font-size: 14px;
+  color: var(--text-2);
+  line-height: 1;
+  align-self: center;
+}
+.arrow-down {
+  text-align: center; color: var(--text-2); font-size: 14px;
+  line-height: 1; margin: 2px 0;
+}
+
+/* ── Route badge ── */
+.route-badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  border: 1px solid;
+  margin-top: 6px;
+  display: inline-block;
+}
+.route-rag { background: rgba(88,166,255,.1); border-color: var(--accent); color: var(--accent); }
+.route-web { background: rgba(63,185,80,.1); border-color: var(--green); color: var(--green); }
+.route-human { background: rgba(188,140,255,.1); border-color: var(--purple); color: var(--purple); }
+
+/* ══════════════════════════════════════════════════════════════════
+   EXECUTION TRACE
+   ══════════════════════════════════════════════════════════════════ */
+#trace-container { padding: 8px; }
+.trace-entry {
+  border-left: 3px solid var(--border);
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: var(--bg-2);
+  cursor: pointer;
+  transition: border-color 0.2s;
+  font-size: 12px;
+}
+.trace-entry:hover { border-color: var(--accent); }
+.trace-entry.running   { border-color: var(--yellow); }
+.trace-entry.completed { border-color: var(--green); }
+.trace-entry.failed    { border-color: var(--red); }
+.trace-entry.interrupted { border-color: var(--purple); }
+.trace-node { font-weight: 600; font-size: 11px; margin-bottom: 3px; }
+.trace-summary { color: var(--text-2); font-size: 11px; line-height: 1.4; }
+.trace-dur { color: var(--text-2); font-size: 10px; margin-top: 2px; }
+.trace-status {
+  display: inline-block; font-size: 9px; padding: 1px 6px;
+  border-radius: 20px; margin-left: 6px; font-weight: 600; text-transform: uppercase;
+}
+.s-running { background: rgba(210,153,34,.2); color: var(--yellow); }
+.s-completed { background: rgba(63,185,80,.2); color: var(--green); }
+.s-failed { background: rgba(248,81,73,.2); color: var(--red); }
+.s-interrupted { background: rgba(188,140,255,.2); color: var(--purple); }
+
+/* ══════════════════════════════════════════════════════════════════
+   CHAT
+   ══════════════════════════════════════════════════════════════════ */
+#chat-messages {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+#chat-messages::-webkit-scrollbar { width: 4px; }
+#chat-messages::-webkit-scrollbar-thumb { background: var(--bg-3); }
+
+.msg {
+  max-width: 80%;
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  font-size: 14px;
+  line-height: 1.6;
+}
+.msg.user {
+  align-self: flex-end;
+  background: var(--accent);
+  color: #0d1117;
+  font-weight: 500;
+  border-bottom-right-radius: 2px;
+}
+.msg.assistant {
+  align-self: flex-start;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  color: var(--text-0);
+  border-bottom-left-radius: 2px;
+  max-width: 90%;
+}
+.msg.system-msg {
+  align-self: center;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12px;
+  padding: 4px 0;
+  border: none;
+}
+.msg.error-msg {
+  align-self: center;
+  background: rgba(248,81,73,.1);
+  border: 1px solid var(--red);
+  color: var(--red);
+  font-size: 12px;
+}
+.msg-meta {
+  font-size: 10px;
+  color: var(--text-2);
+  margin-top: 6px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.msg-meta .tag {
+  padding: 1px 6px; border-radius: 20px; border: 1px solid var(--border);
+}
+.sources-list { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
+.source-item {
+  font-size: 11px; color: var(--accent); margin-top: 4px;
+  display: flex; gap: 4px; align-items: flex-start;
+}
+.source-item .src-icon { flex-shrink: 0; }
+
+/* ── Processing indicator ── */
+.processing-indicator {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 12px;
+  color: var(--text-2);
+}
+.dot-loader span {
+  display: inline-block;
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent);
+  animation: dotBounce 1.2s infinite ease-in-out;
+  margin: 0 2px;
+}
+.dot-loader span:nth-child(2) { animation-delay: .2s; }
+.dot-loader span:nth-child(3) { animation-delay: .4s; }
+@keyframes dotBounce {
+  0%, 80%, 100% { transform: scale(0.6); opacity: .4; }
+  40% { transform: scale(1); opacity: 1; }
+}
+
+/* ── Input area ── */
+.chat-input-wrap {
+  border-top: 1px solid var(--border);
+  padding: 16px 20px;
+  display: flex;
+  gap: 10px;
+  flex-shrink: 0;
+}
+#query-input {
+  flex: 1;
+  background: var(--bg-2);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  color: var(--text-0);
+  font-size: 14px;
+  outline: none;
+  resize: none;
+  height: 44px;
+  transition: border-color .2s;
+}
+#query-input:focus { border-color: var(--accent); }
+#query-input:disabled { opacity: .5; cursor: not-allowed; }
+
+.btn {
+  padding: 10px 18px;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition: all .2s;
+}
+.btn-primary {
+  background: var(--accent);
+  color: #0d1117;
+}
+.btn-primary:hover { background: #79beff; }
+.btn-primary:disabled { opacity: .4; cursor: not-allowed; }
+.btn-secondary {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  color: var(--text-1);
+}
+.btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+#new-chat-btn {
+  position: absolute;
+  top: 12px; right: 20px;
+  font-size: 11px;
+  padding: 4px 10px;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   HUMAN GATE PANEL
+   ══════════════════════════════════════════════════════════════════ */
+#human-gate-panel {
+  display: none;
+  margin: 0 20px 16px;
+  background: var(--bg-2);
+  border: 2px solid var(--purple);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+#human-gate-panel.visible { display: block; }
+.hg-header {
+  display: flex; align-items: center; gap: 8px;
+  font-weight: 600; margin-bottom: 10px; color: var(--purple);
+  font-size: 13px;
+}
+#hg-question {
+  font-size: 13px; color: var(--text-1); margin-bottom: 12px;
+  line-height: 1.5; padding: 10px 12px;
+  background: var(--bg-3); border-radius: var(--radius);
+}
+.hg-input-row { display: flex; gap: 8px; }
+#hg-input {
+  flex: 1;
+  background: var(--bg-0);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  color: var(--text-0);
+  font-size: 13px;
+  outline: none;
+}
+#hg-input:focus { border-color: var(--purple); }
+.btn-purple {
+  background: var(--purple);
+  color: #0d1117;
+}
+.btn-purple:hover { background: #d1b0ff; }
+
+/* ══════════════════════════════════════════════════════════════════
+   STATE INSPECTOR (right panel)
+   ══════════════════════════════════════════════════════════════════ */
+#state-inspector { padding: 12px; font-family: monospace; font-size: 11px; }
+.state-field {
+  margin-bottom: 12px;
+  background: var(--bg-2);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.state-key {
+  padding: 6px 10px;
+  background: var(--bg-3);
+  font-weight: 600;
+  color: var(--accent);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
+.state-val {
+  padding: 8px 10px;
+  color: var(--text-1);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 160px;
+  overflow-y: auto;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.state-val.json-val { color: var(--green); }
+.quality-bar-wrap {
+  margin-top: 4px;
+  background: var(--bg-3);
+  border-radius: 4px;
+  height: 6px;
+  overflow: hidden;
+}
+.quality-bar {
+  height: 100%;
+  background: var(--green);
+  border-radius: 4px;
+  transition: width .5s;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   NODE DETAIL MODAL
+   ══════════════════════════════════════════════════════════════════ */
+#node-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.7);
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
+}
+#node-modal.visible { display: flex; }
+.modal-box {
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  max-width: 560px;
+  width: 90%;
+  box-shadow: var(--shadow);
+  position: relative;
+}
+.modal-title { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
+.modal-close {
+  position: absolute; top: 16px; right: 16px;
+  background: none; border: none; color: var(--text-2);
+  cursor: pointer; font-size: 20px;
+}
+.modal-field { margin-bottom: 12px; }
+.modal-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .8px;
+  color: var(--text-2); margin-bottom: 4px;
+}
+.modal-content {
+  background: var(--bg-2); border-radius: var(--radius);
+  padding: 10px 12px; font-size: 12px; color: var(--text-1);
+  white-space: pre-wrap; max-height: 200px; overflow-y: auto; font-family: monospace;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   EMPTY STATE
+   ══════════════════════════════════════════════════════════════════ */
+#empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: var(--text-2);
+}
+#empty-state .big-icon { font-size: 48px; }
+#empty-state h2 { font-size: 20px; color: var(--text-1); }
+#empty-state p { font-size: 13px; max-width: 380px; text-align: center; line-height: 1.6; }
+.example-queries { display: flex; flex-direction: column; gap: 6px; width: 100%; max-width: 400px; }
+.ex-query {
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 8px 14px; font-size: 12px; color: var(--text-1); cursor: pointer;
+  transition: border-color .2s;
+}
+.ex-query:hover { border-color: var(--accent); color: var(--accent); }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     HEADER
+     ══════════════════════════════════════════════════════════════════ -->
+<header>
+  <span style="font-size:20px">🕸️</span>
+  <h1>LangGraph Agentic RAG</h1>
+  <span class="badge">7 Nodes</span>
+  <span class="badge" style="border-color:var(--green);color:var(--green)">SSE Streaming</span>
+  <span class="badge" style="border-color:var(--purple);color:var(--purple)">Human-in-the-Loop</span>
+  <div id="health-dot" title="Service health"></div>
+  <button class="btn btn-secondary" id="new-chat-btn" onclick="newChat()" style="margin-left:8px;font-size:11px;padding:4px 10px">+ New Chat</button>
+</header>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     WORKSPACE
+     ══════════════════════════════════════════════════════════════════ -->
+<div class="workspace">
+
+  <!-- ── LEFT: Graph + Trace ── -->
+  <div class="left-panel">
+    <div id="graph-container">
+      <div class="graph-title">⬡ Agent Graph</div>
+      <div id="graph-viz"></div>
+    </div>
+    <div class="panel-header"><span class="icon">📋</span> Execution Trace</div>
+    <div class="scrollable" id="trace-container"></div>
+  </div>
+
+  <!-- ── CENTRE: Chat ── -->
+  <div class="centre-panel" style="position:relative">
+    <div id="chat-messages">
+      <div id="empty-state">
+        <div class="big-icon">🤖</div>
+        <h2>LangGraph Agentic Workflow</h2>
+        <p>Ask a question. Watch 7 AI nodes orchestrate your answer in real-time — with RAG retrieval, web search, human-in-the-loop, and quality checking.</p>
+        <div class="example-queries" id="example-queries">
+          <div class="ex-query" onclick="sendExample(this)">What is Bhanu Teja's work experience and skills?</div>
+          <div class="ex-query" onclick="sendExample(this)">What are the latest trends in AI and LLMs in 2026?</div>
+          <div class="ex-query" onclick="sendExample(this)">Should I look at my documents or the internet? Help me understand AI agents.</div>
+          <div class="ex-query" onclick="sendExample(this)">tell me about the candidate's education background</div>
+          <div class="ex-query" onclick="sendExample(this)">What is the current state of the economy?</div>
+          <div class="ex-query" onclick="sendExample(this)">aasdfjkasdf qwerty 1234!</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Human Gate Panel -->
+    <div id="human-gate-panel">
+      <div class="hg-header">🧑 Human Gate — I need your input</div>
+      <div id="hg-question">Loading question…</div>
+      <div class="hg-input-row">
+        <input id="hg-input" placeholder="Type your answer…" onkeydown="if(event.key==='Enter')submitHuman()" />
+        <button class="btn btn-purple" onclick="submitHuman()">Submit</button>
+      </div>
+    </div>
+
+    <!-- Input bar -->
+    <div class="chat-input-wrap">
+      <textarea id="query-input"
+        placeholder="Ask anything — documents, web, or let the AI decide…"
+        onkeydown="handleKey(event)"></textarea>
+      <button class="btn btn-primary" id="send-btn" onclick="sendQuery()">Send</button>
+    </div>
+  </div>
+
+  <!-- ── RIGHT: State inspector ── -->
+  <div class="right-panel">
+    <div class="panel-header"><span class="icon">🔍</span> State Inspector</div>
+    <div class="scrollable" id="state-inspector">
+      <div style="padding:20px;text-align:center;color:var(--text-2);font-size:12px">
+        State will appear here as nodes run.
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     NODE DETAIL MODAL
+     ══════════════════════════════════════════════════════════════════ -->
+<div id="node-modal" onclick="closeModal(event)">
+  <div class="modal-box">
+    <button class="modal-close" onclick="closeModal()">&times;</button>
+    <div class="modal-title" id="modal-title"></div>
+    <div class="modal-field">
+      <div class="modal-label">Description</div>
+      <div class="modal-content" id="modal-desc"></div>
+    </div>
+    <div class="modal-field">
+      <div class="modal-label">Input</div>
+      <div class="modal-content" id="modal-input"></div>
+    </div>
+    <div class="modal-field">
+      <div class="modal-label">Output</div>
+      <div class="modal-content" id="modal-output"></div>
+    </div>
+    <div class="modal-field" id="modal-error-wrap" style="display:none">
+      <div class="modal-label" style="color:var(--red)">Error</div>
+      <div class="modal-content" id="modal-error" style="color:var(--red)"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     JAVASCRIPT
+     ══════════════════════════════════════════════════════════════════ -->
+<script>
+/* ── App State ──────────────────────────────────────────────────────────── */
+const API = '';  // same origin
+let currentThreadId = null;
+let isRunning = false;
+let nodeStates = {};   // node_id → {status, trace}
+let fullState = {};    // complete latest graph state
+let traceList = [];    // ordered trace entries
+let graphSchema = null;
+
+const NODE_META = {
+  query_validator:    { icon: '🛡️', desc: 'Validates and sanitises the user query. Detects injection, gibberish, and out-of-domain requests.' },
+  router:             { icon: '🔀', desc: 'Routes query to RAG, Web Search, or Human Gate based on content analysis.' },
+  rag_retriever:      { icon: '📚', desc: 'Embeds query → cosine similarity search in Qdrant vector store → top-k chunks.' },
+  web_searcher:       { icon: '🌐', desc: 'Searches live web via Tavily API and returns structured results with URLs.' },
+  human_gate:         { icon: '🧑', desc: 'Pauses graph execution and asks the human a clarifying question. Resumes on answer.' },
+  response_generator: { icon: '✍️', desc: 'Combines evidence and generates a cited answer using GPT-4o.' },
+  quality_checker:    { icon: '✅', desc: 'Evaluates groundedness, completeness, and quality. PASS→done, REVISE→regenerate.' },
+};
+
+/* ── Graph Visualisation ─────────────────────────────────────────────────── */
+function renderGraph(schema) {
+  const container = document.getElementById('graph-viz');
+  if (!schema) { container.innerHTML = '<div style="color:var(--text-2);font-size:11px">Schema unavailable</div>'; return; }
+
+  // Layout: col by order
+  // order 1: query_validator
+  // order 2: router
+  // order 3: rag_retriever, web_searcher, human_gate (side by side)
+  // order 4: response_generator
+  // order 5: quality_checker
+
+  const byOrder = {};
+  schema.nodes.forEach(n => {
+    if (!byOrder[n.order]) byOrder[n.order] = [];
+    byOrder[n.order].push(n);
+  });
+
+  let html = '';
+  const orders = Object.keys(byOrder).sort();
+  orders.forEach((order, i) => {
+    const nodes = byOrder[order];
+    if (i > 0) html += `<div class="arrow-down">↓</div>`;
+    html += `<div class="graph-row">`;
+    nodes.forEach((n, ni) => {
+      if (ni > 0) html += `<div class="arrow">→</div>`;
+      const meta = NODE_META[n.id] || { icon: '⬡' };
+      html += `
+        <div class="node-card state-waiting" id="node-${n.id}" onclick="showNodeDetail('${n.id}')" title="${n.description}">
+          <span class="node-icon">${meta.icon}</span>
+          ${n.label}
+          <div class="node-dur" id="node-${n.id}-dur"></div>
+        </div>`;
+    });
+    html += `</div>`;
+  });
+
+  // Route badge placeholder
+  html += `<div id="route-badge" style="text-align:center;margin-top:8px;display:none"></div>`;
+  container.innerHTML = html;
+}
+
+function setNodeState(nodeId, status, durMs) {
+  nodeStates[nodeId] = { status, durMs };
+  const el = document.getElementById(`node-${nodeId}`);
+  if (!el) return;
+  el.className = `node-card state-${status}`;
+  const durEl = document.getElementById(`node-${nodeId}-dur`);
+  if (durEl && durMs) durEl.textContent = `${durMs.toFixed(0)}ms`;
+}
+
+function resetNodeStates() {
+  nodeStates = {};
+  document.querySelectorAll('.node-card').forEach(el => {
+    el.className = 'node-card state-waiting';
+  });
+  document.querySelectorAll('.node-dur').forEach(el => el.textContent = '');
+  const rb = document.getElementById('route-badge');
+  if (rb) rb.style.display = 'none';
+}
+
+function showRouteBadge(route) {
+  const rb = document.getElementById('route-badge');
+  if (!rb) return;
+  const labels = { rag: '📚 RAG', web_search: '🌐 Web Search', needs_human: '🧑 Human Gate' };
+  const cls = route === 'rag' ? 'route-rag' : route === 'web_search' ? 'route-web' : 'route-human';
+  rb.innerHTML = `<span class="route-badge ${cls}">${labels[route] || route}</span>`;
+  rb.style.display = 'block';
+}
+
+/* ── Execution Trace ─────────────────────────────────────────────────────── */
+function appendTrace(entry) {
+  traceList.push(entry);
+  const container = document.getElementById('trace-container');
+  const el = document.createElement('div');
+  const statusClass = `s-${entry.status}`;
+  el.className = `trace-entry ${entry.status}`;
+  el.setAttribute('data-node', entry.node);
+  el.onclick = () => showNodeDetail(entry.node);
+  el.innerHTML = `
+    <div class="trace-node">
+      ${NODE_META[entry.node]?.icon || '⬡'} ${entry.node}
+      <span class="trace-status ${statusClass}">${entry.status}</span>
+    </div>
+    <div class="trace-summary">${entry.input_summary || ''}</div>
+    ${entry.output_summary ? `<div class="trace-summary" style="color:var(--text-1)">${entry.output_summary}</div>` : ''}
+    ${entry.duration_ms ? `<div class="trace-dur">${entry.duration_ms.toFixed(0)}ms</div>` : ''}
+    ${entry.error ? `<div style="color:var(--red);font-size:10px;margin-top:2px">⚠ ${entry.error}</div>` : ''}
+  `;
+  container.appendChild(el);
+  container.scrollTop = container.scrollHeight;
+}
+
+function updateLastTrace(entry) {
+  const container = document.getElementById('trace-container');
+  const existing = container.querySelector(`[data-node="${entry.node}"]:last-child`);
+  if (existing) {
+    existing.className = `trace-entry ${entry.status}`;
+    existing.querySelector('.trace-status').className = `trace-status s-${entry.status}`;
+    existing.querySelector('.trace-status').textContent = entry.status;
+    const sumEls = existing.querySelectorAll('.trace-summary');
+    if (sumEls[0]) sumEls[0].textContent = entry.input_summary || '';
+    if (sumEls[1] && entry.output_summary) sumEls[1].textContent = entry.output_summary;
+    const durEl = existing.querySelector('.trace-dur');
+    if (durEl && entry.duration_ms) durEl.textContent = `${entry.duration_ms.toFixed(0)}ms`;
+  } else {
+    appendTrace(entry);
+  }
+}
+
+/* ── State Inspector ─────────────────────────────────────────────────────── */
+function updateInspector(state) {
+  fullState = { ...fullState, ...state };
+  const container = document.getElementById('state-inspector');
+  const fields = [
+    { key: 'route', label: '🔀 Route', val: state.route || fullState.route || '—' },
+    { key: 'validated_query', label: '🛡️ Validated Query', val: state.validated_query || fullState.validated_query || '—' },
+    { key: 'retrieved_documents', label: '📚 RAG Chunks', val: (state.retrieved_documents || fullState.retrieved_documents || []).length + ' chunks' },
+    { key: 'web_results', label: '🌐 Web Results', val: (state.web_results || fullState.web_results || []).length + ' results' },
+    { key: 'generated_response', label: '✍️ Draft Answer', val: (state.generated_response || fullState.generated_response || '—').substring(0, 200) + ((state.generated_response || '').length > 200 ? '…' : '') },
+    { key: 'quality_result', label: '✅ Quality', val: state.quality_result || fullState.quality_result },
+    { key: 'retry_count', label: '🔁 Retry Count', val: state.retry_count !== undefined ? state.retry_count : (fullState.retry_count || 0) },
+    { key: 'errors', label: '⚠️ Errors', val: (state.errors || fullState.errors || []).join('\n') || 'none' },
+  ];
+
+  container.innerHTML = fields.map(f => {
+    let display;
+    if (typeof f.val === 'object' && f.val !== null) {
+      display = `<div class="state-val json-val">${JSON.stringify(f.val, null, 2)}</div>`;
+      if (f.key === 'quality_result' && f.val.score !== undefined) {
+        display += `<div style="padding:0 10px 10px">
+          <div class="quality-bar-wrap"><div class="quality-bar" style="width:${f.val.score * 100}%;background:${f.val.score >= 0.7 ? 'var(--green)' : f.val.score >= 0.4 ? 'var(--yellow)' : 'var(--red)'}"></div></div>
+          <div style="font-size:9px;color:var(--text-2);margin-top:4px">Score: ${(f.val.score * 100).toFixed(0)}% | Verdict: <strong style="color:${f.val.verdict==='PASS'?'var(--green)':'var(--yellow)'}">${f.val.verdict}</strong></div>
+        </div>`;
+      }
+    } else {
+      display = `<div class="state-val">${f.val}</div>`;
+    }
+    return `<div class="state-field">
+      <div class="state-key">${f.label}</div>
+      ${display}
+    </div>`;
+  }).join('');
+}
+
+/* ── Node Detail Modal ───────────────────────────────────────────────────── */
+function showNodeDetail(nodeId) {
+  const meta = NODE_META[nodeId] || { icon: '⬡', desc: 'Node' };
+  const trace = traceList.filter(t => t.node === nodeId).pop() || {};
+  const ns = nodeStates[nodeId] || {};
+
+  document.getElementById('modal-title').innerHTML = `${meta.icon} ${nodeId} <span class="trace-status s-${ns.status || 'waiting'}">${ns.status || 'waiting'}</span>`;
+  document.getElementById('modal-desc').textContent = meta.desc;
+  document.getElementById('modal-input').textContent = trace.input_summary || '(not yet executed)';
+  document.getElementById('modal-output').textContent = trace.output_summary || '—';
+
+  const errWrap = document.getElementById('modal-error-wrap');
+  const errEl = document.getElementById('modal-error');
+  if (trace.error) {
+    errWrap.style.display = 'block';
+    errEl.textContent = trace.error;
+  } else {
+    errWrap.style.display = 'none';
+  }
+
+  document.getElementById('node-modal').classList.add('visible');
+}
+function closeModal(e) {
+  if (!e || e.target === document.getElementById('node-modal')) {
+    document.getElementById('node-modal').classList.remove('visible');
+  }
+}
+
+/* ── Chat ───────────────────────────────────────────────────────────────── */
+function appendMessage(role, content, meta) {
+  const messages = document.getElementById('chat-messages');
+  // Remove empty state
+  const es = document.getElementById('empty-state');
+  if (es) es.remove();
+
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  div.innerHTML = content.replace(/\n/g, '<br>');
+
+  if (meta) {
+    const m = document.createElement('div');
+    m.className = 'msg-meta';
+    if (meta.route) m.innerHTML += `<span class="tag">🔀 ${meta.route}</span>`;
+    if (meta.quality_score !== undefined && meta.quality_score !== null) {
+      m.innerHTML += `<span class="tag">✅ ${(meta.quality_score * 100).toFixed(0)}%</span>`;
+    }
+    if (meta.retries) m.innerHTML += `<span class="tag">🔁 ${meta.retries} revision${meta.retries > 1 ? 's' : ''}</span>`;
+    if (meta.sources && meta.sources.length > 0) {
+      let sl = '<div class="sources-list">';
+      meta.sources.forEach(s => {
+        const icon = s.kind === 'web' ? '🌐' : '📄';
+        sl += `<div class="source-item"><span class="src-icon">${icon}</span><div><strong>${s.title}</strong><br><small>${s.reference}</small></div></div>`;
+      });
+      sl += '</div>';
+      m.innerHTML += sl;
+    }
+    div.appendChild(m);
+  }
+
+  messages.appendChild(div);
+  messages.scrollTop = messages.scrollHeight;
+  return div;
+}
+
+function showProcessing(nodeLabel) {
+  const messages = document.getElementById('chat-messages');
+  let proc = document.getElementById('processing-indicator');
+  if (!proc) {
+    proc = document.createElement('div');
+    proc.id = 'processing-indicator';
+    proc.className = 'processing-indicator';
+    messages.appendChild(proc);
+  }
+  proc.innerHTML = `
+    <div class="dot-loader"><span></span><span></span><span></span></div>
+    <span>${nodeLabel || 'Processing…'}</span>
+  `;
+  messages.scrollTop = messages.scrollHeight;
+}
+function removeProcessing() {
+  const p = document.getElementById('processing-indicator');
+  if (p) p.remove();
+}
+
+/* ── Human Gate UI ──────────────────────────────────────────────────────── */
+function showHumanGate(question) {
+  document.getElementById('hg-question').textContent = question || 'Please clarify your request.';
+  document.getElementById('human-gate-panel').classList.add('visible');
+  document.getElementById('hg-input').focus();
+  removeProcessing();
+  setNodeState('human_gate', 'interrupted', null);
+}
+function hideHumanGate() {
+  document.getElementById('human-gate-panel').classList.remove('visible');
+  document.getElementById('hg-input').value = '';
+}
+
+function submitHuman() {
+  const input = document.getElementById('hg-input').value.trim();
+  if (!input || !currentThreadId) return;
+  hideHumanGate();
+  appendMessage('user', `💬 ${input}`);
+  appendMessage('system-msg', '↩ Resuming graph execution…');
+  resumeGraph(input);
+}
+
+/* ── Core Graph Streaming ────────────────────────────────────────────────── */
+let activeES = null;
+
+function startStream(url, body) {
+  if (activeES) { activeES.abort && activeES.abort(); }
+
+  isRunning = true;
+  setInputEnabled(false);
+  traceList = [];
+  document.getElementById('trace-container').innerHTML = '';
+
+  fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(async res => {
+    if (!res.ok) {
+      const err = await res.text();
+      appendMessage('error-msg', `❌ Request failed: ${err}`);
+      setInputEnabled(true);
+      isRunning = false;
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    const pump = async () => {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop(); // keep incomplete line
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim();
+          if (raw === '[DONE]') break;
+          try { handleEvent(JSON.parse(raw)); } catch (e) {}
+        }
+      }
+      isRunning = false;
+      setInputEnabled(true);
+    };
+    pump().catch(e => {
+      console.error('Stream error:', e);
+      isRunning = false;
+      setInputEnabled(true);
+    });
+  }).catch(e => {
+    appendMessage('error-msg', `❌ Network error: ${e.message}`);
+    isRunning = false;
+    setInputEnabled(true);
+  });
+}
+
+function handleEvent(ev) {
+  switch (ev.type) {
+
+    case 'started':
+      currentThreadId = ev.thread_id;
+      showProcessing('Initialising graph…');
+      break;
+
+    case 'node_update': {
+      const node = ev.node;
+      const trace = ev.trace || {};
+      const status = trace.status || 'completed';
+      setNodeState(node, status, trace.duration_ms);
+      if (trace.node) updateLastTrace(trace);
+      showProcessing(`Running: ${node}…`);
+      updateInspector(ev.updates || {});
+
+      // Show route badge after router completes
+      if (node === 'router' && ev.updates?.route) {
+        showRouteBadge(ev.updates.route);
+      }
+      break;
+    }
+
+    case 'interrupt':
+      currentThreadId = ev.thread_id || currentThreadId;
+      showHumanGate(ev.interrupt_value?.question || 'Please clarify your request.');
+      setInputEnabled(false); // keep disabled — will re-enable after resume
+      break;
+
+    case 'final':
+      removeProcessing();
+      currentThreadId = ev.thread_id || currentThreadId;
+      updateInspector(ev);
+
+      if (ev.is_complete || ev.answer) {
+        appendMessage('assistant', ev.answer || '(no answer generated)', {
+          route: ev.route,
+          quality_score: ev.quality_score,
+          retries: ev.retry_count,
+          sources: ev.sources || [],
+        });
+      } else if (ev.errors && ev.errors.length > 0) {
+        appendMessage('error-msg', '⚠ Query could not be processed:\n' + ev.errors.join('\n'));
+      }
+
+      // Mark all completed nodes
+      if (ev.execution_trace) {
+        ev.execution_trace.forEach(t => {
+          if (t.status !== 'running') setNodeState(t.node, t.status, t.duration_ms);
+        });
+      }
+      break;
+
+    case 'error':
+      removeProcessing();
+      appendMessage('error-msg', `❌ ${ev.message}`);
+      setInputEnabled(true);
+      break;
+
+    case 'done':
+      removeProcessing();
+      setInputEnabled(true);
+      isRunning = false;
+      break;
+  }
+}
+
+function resumeGraph(humanInput) {
+  startStream(`${API}/api/chat/resume`, {
+    thread_id: currentThreadId,
+    human_input: humanInput,
+  });
+}
+
+/* ── Send Query ──────────────────────────────────────────────────────────── */
+function sendQuery() {
+  const input = document.getElementById('query-input');
+  const query = input.value.trim();
+  if (!query || isRunning) return;
+  input.value = '';
+
+  appendMessage('user', query);
+  resetNodeStates();
+  updateInspector({});
+  document.getElementById('state-inspector').innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-2);font-size:12px">Processing…</div>';
+
+  startStream(`${API}/api/chat`, { query, thread_id: '' });
+}
+
+function sendExample(el) {
+  document.getElementById('query-input').value = el.textContent.trim();
+  sendQuery();
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendQuery();
+  }
+}
+
+function setInputEnabled(enabled) {
+  document.getElementById('query-input').disabled = !enabled;
+  document.getElementById('send-btn').disabled = !enabled;
+}
+
+/* ── New Chat ────────────────────────────────────────────────────────────── */
+function newChat() {
+  if (isRunning) return;
+  currentThreadId = null;
+  fullState = {};
+  traceList = [];
+  resetNodeStates();
+  document.getElementById('chat-messages').innerHTML = `
+    <div id="empty-state">
+      <div class="big-icon">🤖</div>
+      <h2>LangGraph Agentic Workflow</h2>
+      <p>Ask a question. Watch 7 AI nodes orchestrate your answer in real-time.</p>
+      <div class="example-queries" id="example-queries">
+        <div class="ex-query" onclick="sendExample(this)">What is Bhanu Teja's work experience and skills?</div>
+        <div class="ex-query" onclick="sendExample(this)">What are the latest trends in AI and LLMs in 2026?</div>
+        <div class="ex-query" onclick="sendExample(this)">Should I look at my documents or the internet?</div>
+        <div class="ex-query" onclick="sendExample(this)">tell me about the candidate's education background</div>
+      </div>
+    </div>`;
+  document.getElementById('trace-container').innerHTML = '';
+  document.getElementById('state-inspector').innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-2);font-size:12px">State will appear here as nodes run.</div>';
+  hideHumanGate();
+}
+
+/* ── Health check ────────────────────────────────────────────────────────── */
+async function checkHealth() {
+  try {
+    const r = await fetch(`${API}/api/health`);
+    const data = await r.json();
+    const dot = document.getElementById('health-dot');
+    dot.className = data.status === 'ok' ? 'ok' : 'err';
+    dot.title = JSON.stringify(data.services, null, 2);
+  } catch (e) {
+    document.getElementById('health-dot').className = 'err';
+  }
+}
+
+/* ── Init ───────────────────────────────────────────────────────────────── */
+async function init() {
+  // Load graph schema
+  try {
+    const r = await fetch(`${API}/api/graph/schema`);
+    graphSchema = await r.json();
+    renderGraph(graphSchema);
+  } catch (e) {
+    console.error('Schema load failed:', e);
+    renderGraph(null);
+  }
+  checkHealth();
+  setInterval(checkHealth, 30000);
+}
+
+init();
+</script>
+</body>
+</html>

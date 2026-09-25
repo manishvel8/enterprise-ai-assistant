@@ -1,0 +1,163 @@
+# monitoring/docker-compose.monitoring.yml — Prometheus + Grafana + Alertmanager stack.
+#
+# WHY SEPARATE FROM MAIN DOCKER-COMPOSE?
+#   Monitoring is optional and can be heavy (Prometheus stores metrics on disk).
+#   Keeping it separate lets you start monitoring independently.
+#
+# RUN:
+#   cd enterprise-ai-assistant
+#   docker-compose -f monitoring/docker-compose.monitoring.yml up -d
+#
+# ACCESS:
+#   Prometheus:   http://localhost:9090  (raw metrics + PromQL queries)
+#   Grafana:      http://localhost:3001  (dashboards) → login: admin/admin
+#   Alertmanager: http://localhost:9093  (active alerts + routing)
+#
+# PROMETHEUS QUERIES TO TRY:
+#   up                                → which targets are alive
+#   http_requests_total               → all HTTP request counts
+#   rate(http_requests_total[5m])     → request rate per second
+#   histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))
+#   process_resident_memory_bytes     → RSS memory usage
+#
+# PORTS:
+#   9090 Prometheus  (conflicts with some apps — change if needed)
+#   3001 Grafana     (3000 is used by Langfuse)
+#   9093 Alertmanager
+#   9100 Node exporter
+#   9121 Redis exporter
+#   9187 Postgres exporter
+
+version: '3.9'
+
+networks:
+  monitoring:
+    driver: bridge
+  # Connect to the main app network so exporters can reach app containers
+  ai-network:
+    external: true
+    name: enterprise-ai-assistant_ai-network
+
+volumes:
+  prometheus_data:
+  grafana_data:
+
+services:
+
+  # ── Prometheus ────────────────────────────────────────────────────────────
+  # Scrapes metrics from all targets every 15s and stores in TSDB.
+  prometheus:
+    image: prom/prometheus:v2.49.0
+    container_name: monitoring-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d      # keep 30 days of metrics
+      - --web.console.libraries=/etc/prometheus/console_libraries
+      - --web.console.templates=/etc/prometheus/consoles
+      - --web.enable-lifecycle                 # enables POST /-/reload without restart
+      - --web.enable-admin-api
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts/:/etc/prometheus/alerts/:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - monitoring
+      - ai-network
+    extra_hosts:
+      # On Linux, host.docker.internal doesn't resolve by default.
+      # This makes it point to the host's Docker bridge IP.
+      - "host.docker.internal:host-gateway"
+
+  # ── Grafana ───────────────────────────────────────────────────────────────
+  # Dashboard visualization. Auto-loads our dashboard JSON on startup.
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: monitoring-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # Disable authentication for local development
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      # Plugins
+      GF_INSTALL_PLUGINS: grafana-piechart-panel
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+    ports:
+      - "3001:3000"    # 3001 on host because 3000 is used by Langfuse
+    networks:
+      - monitoring
+    depends_on:
+      - prometheus
+
+  # ── Alertmanager ─────────────────────────────────────────────────────────
+  # Receives alerts from Prometheus and routes them.
+  alertmanager:
+    image: prom/alertmanager:v0.26.0
+    container_name: monitoring-alertmanager
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --web.external-url=http://localhost:9093
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "9093:9093"
+    networks:
+      - monitoring
+
+  # ── Node Exporter ─────────────────────────────────────────────────────────
+  # Exports host system metrics (CPU, memory, disk, network).
+  node-exporter:
+    image: prom/node-exporter:v1.7.0
+    container_name: monitoring-node-exporter
+    restart: unless-stopped
+    command:
+      - --path.rootfs=/host
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    pid: host
+    ports:
+      - "9100:9100"
+    networks:
+      - monitoring
+
+  # ── Redis Exporter ─────────────────────────────────────────────────────────
+  # Exports Redis metrics (connections, memory, operations/sec).
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.57.0
+    container_name: monitoring-redis-exporter
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: "redis://ai-redis:6379"  # ai-redis = container name in ai-network
+    ports:
+      - "9121:9121"
+    networks:
+      - monitoring
+      - ai-network
+
+  # ── Postgres Exporter ─────────────────────────────────────────────────────
+  # Exports PostgreSQL metrics (connections, queries, replication).
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: monitoring-postgres-exporter
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://ai_user:dev_password@ai-postgres:5433/ai_assistant?sslmode=disable"
+    ports:
+      - "9187:9187"
+    networks:
+      - monitoring
+      - ai-network

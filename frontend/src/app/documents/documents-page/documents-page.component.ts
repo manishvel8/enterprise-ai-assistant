@@ -95,6 +95,9 @@ export class DocumentsPageComponent implements OnInit, OnDestroy {
         error: (err) => {
           console.error('Failed to load documents:', err);
           this.isLoadingDocuments = false;
+          this.errorMessage =
+            'Cannot reach API (is uvicorn running on :8000?). ' +
+            (err?.message || 'Network error');
         },
       });
   }

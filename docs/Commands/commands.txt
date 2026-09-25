@@ -1,0 +1,1871 @@
+Nothing is running yet (backend is down, infra containers are empty). You also still have a **placeholder** `OPENAI_API_KEY` — set a real key in `.env` first or embeddings/chat won’t work.
+
+---
+
+## 1. Commands to bring the app up
+
+On this machine use **`docker-compose`** (with a hyphen).
+
+### Option A — Best for learning (infra in Docker, apps on host)
+
+```bash
+cd /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant
+
+# 1) Put a real key in .env
+#    OPENAI_API_KEY=sk-...your real key...
+
+# 2) Start databases / Redis / MinIO / Qdrant / Neo4j
+docker-compose -f docker-compose.dev.yml up -d
+docker-compose -f docker-compose.dev.yml ps
+```
+
+Then **3 terminals**:
+
+```bash
+# Terminal 1 — API
+cd /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/backend
+source venv/bin/activate
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+# Terminal 2 — Worker (REQUIRED for PDF processing)
+cd /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/backend
+source venv/bin/activate
+celery -A app.workers.document_worker.celery_app worker \
+  --loglevel=info --concurrency=2 --queues=document_processing
+
+# Terminal 3 — UI
+cd /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/frontend
+npm start
+```
+
+### Option B — Everything in Docker
+
+```bash
+cd /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant
+# set real OPENAI_API_KEY in .env
+docker-compose up --build
+```
+
+### URLs after it’s up
+
+| What | URL |
+|------|-----|
+| App UI | http://localhost:4200 |
+| API docs | http://localhost:8000/docs |
+| Qdrant | http://localhost:6333/dashboard |
+| Neo4j | http://localhost:7474 |
+| MinIO | http://localhost:9001 |
+
+Quick check:
+
+```bash
+./scripts/verify-stack.sh
+```
+
+---
+
+## 2. Demo: one PDF through your full pipeline
+
+Your flowchart maps to this project like this:
+
+| Your step | What happens here | Where to watch |
+|-----------|-------------------|----------------|
+| Document Ingestion | UI/API upload → MinIO + Postgres `PENDING` → Celery queue | Network tab / API `202` |
+| Text Extraction | Parser (PDF → text blocks) | Worker log: `Parsing PDF` |
+| Text Cleaning | Normalizer (strip empty, truncate, clean) | Worker: `Normalized: N blocks` |
+| Chunking | 800 tokens, 100 overlap | Worker: `Chunking` / `N chunks` |
+| Metadata Creation | page, section, file_name on each chunk | Postgres / Qdrant payload |
+| Embedding Generation | `text-embedding-3-small` (1536-d) | Worker: `Embedding N chunks` |
+| Vector Database | Store in Qdrant collection `chunks` | http://localhost:6333/dashboard |
+| User Query | Chat message | Chat UI |
+| Query Embedding | Same embed model for the question | Retriever path |
+| Retriever | Cosine top_k=5 | Debug panel: similarity scores |
+| Relevant Chunks | Retrieved texts | Debug: `retrieved_chunks_count` |
+| Prompt Builder | Context Builder + RAG prompt | Answer agent |
+| LLM | GPT-4o | Chat answer |
+| Validation / Guardrails | Critic (grounding) + Cypher safety | Debug: grounded / intent |
+| Final Answer with Sources | Answer + citations | Chat citations |
+
+### Demo steps with a PDF
+
+1. Put any PDF on disk, e.g. `~/Documents/my-doc.pdf` (or use the sample txt first: `docs/fixtures/sample-rag-fact.txt`).
+2. Open **http://localhost:4200 → Documents → upload the PDF**.
+3. Keep **Terminal 2 (Celery)** visible — you should see roughly:
+
+```text
+Starting document processing: doc_...
+Status updated to PROCESSING
+Pipeline: Parsing PDF — my-doc.pdf
+Pipeline: Chunking N content blocks
+Pipeline: Embedding N chunks
+Pipeline: Storing vectors in Qdrant
+Pipeline: Neo4j graph update ...
+Document processing complete
+```
+
+4. Wait until document status = **complete**.
+5. Open **Chat** and ask something only that PDF can answer.
+6. Check:
+   - answer text
+   - **citations** (sources)
+   - **debug panel** (intent, chunk count, similarity scores)
+
+### Or demo via API (same pipeline)
+
+```bash
+# Upload
+curl -s -F "file=@/path/to/your.pdf" \
+  http://localhost:8000/api/documents/upload | jq
+
+# Poll until status=complete (replace DOCUMENT_ID)
+curl -s http://localhost:8000/api/documents/DOCUMENT_ID | jq
+
+# Ask
+curl -s -X POST http://localhost:8000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "demo",
+    "session_id": "demo-1",
+    "message": "Summarize the main points in this document",
+    "stream": false
+  }' | jq
+```
+
+Or one-shot smoke:
+
+```bash
+python3 scripts/test-pipeline.py --file /path/to/your.pdf
+```
+
+### Where each stage “lives” in code
+
+```text
+Upload          → backend/app/api/documents.py
+MinIO           → backend/app/services/storage_service.py
+Celery          → backend/app/workers/document_worker.py
+Extract+Clean   → parsers/* + pipeline/normalizer.py
+Chunk+Metadata  → pipeline/chunker.py
+Embed           → pipeline/embedder.py
+Vector DB       → db/vector_store.py (Qdrant)
+Query path      → agents/workflow.py → Retriever → rag.py → Critic → Memory
+```
+
+---
+
+## 3. Before you start — checklist
+
+1. Edit `.env`: set a **real** `OPENAI_API_KEY` (currently still `sk-your-openai-...`).
+2. Run `docker-compose -f docker-compose.dev.yml up -d`.
+3. Start **API + Celery + frontend** (3 terminals above).
+4. Upload PDF → watch worker → ask in Chat.
+
+If Docker pull fails again (`TLS handshake timeout`), the images can’t download from Docker Hub — retry when the network/registry works.
+
+If you want, I can start the infra + three processes for you next (after you put a real OpenAI key in `.env`).
+
+Configured. Your internal gateway works for both chat and embeddings.
+
+### What I changed
+1. **`.env`** — set your key + `OPENAI_API_BASE=http://172.25.1.60:30444/v1`
+2. **`config.py`** — added `openai_api_base`; loads project-root `.env`
+3. **`openai_service.py`** — passes `base_url` into the OpenAI client
+4. **`docker-compose.yml`** — passes `OPENAI_API_BASE` into backend/worker
+
+### Verified against your gateway
+- Models list: OK (`gpt-4o`, `text-embedding-3-small`, …)
+- Chat: returned `gateway-ok`
+- Embeddings: **1536 dims** with `text-embedding-3-small`
+
+### Security note
+You pasted the API key in chat. Prefer rotating it on the gateway if this chat is shared/logged. `.env` is gitignored — don’t commit it.
+
+---
+
+### Bring the app up next
+
+```bash
+cd /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant
+
+# Infra
+docker-compose -f docker-compose.dev.yml up -d
+```
+
+Then 3 terminals:
+
+```bash
+# API
+cd backend && source venv/bin/activate
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+# Worker (needed for PDF ingest)
+cd backend && source venv/bin/activate
+celery -A app.workers.document_worker.celery_app worker \
+  --loglevel=info --concurrency=2 --queues=document_processing
+
+# UI
+cd frontend && npm start
+```
+
+Then open http://localhost:4200 → upload a PDF → watch the Celery terminal → ask in Chat.
+
+I can start infra + API/worker for you in this session if you want.
+
+### UI: where to chat + blank page
+
+1. Click **Chat** in the top-right nav → http://localhost:4200/chat  
+2. **Documents** is only for upload/library → http://localhost:4200/documents  
+
+Your Documents page looked empty because dark-theme `body` styles were in `app.component.scss`. Angular **encapsulation** never applied them → white background + near-white text = invisible content (felt “zoomed out”). That’s fixed in global `styles.scss` — hard-refresh (**Ctrl+Shift+R**).
+
+Terminal NG8107 warnings are harmless; they don’t block chat.
+
+---
+
+### Credentials (from your `.env` / compose)
+
+| Service | URL | Username | Password |
+|---------|-----|----------|----------|
+| **Neo4j Browser** | http://localhost:7474 | `neo4j` | `dev_password` |
+| **MinIO Console** | http://localhost:9001 | `minioadmin` | `minioadmin` |
+| **Postgres** | `localhost:5433` | `ai_user` | `dev_password` |
+| **Redis** | `localhost:6379` | — | (none) |
+| **Qdrant** | http://localhost:6333/dashboard | — | (none) |
+
+MinIO API (S3) is on **:9000**; console is **:9001**.
+
+---
+
+### What to check on each URL (E2E)
+
+| URL | What you should see / verify |
+|-----|------------------------------|
+| **http://localhost:4200** | Dark UI. **Documents**: upload zone + library. **Chat**: sidebar + input. |
+| **http://localhost:8000/docs** | Swagger: try `GET /health`, `GET /api/documents`, `POST /api/chat`. |
+| **http://localhost:9001** | Login → bucket **`ai-documents`** → object like `documents/doc_…/original.pdf` after upload. |
+| **http://localhost:6333/dashboard** | Collection **`chunks`** — point count rises after successful processing. |
+| **http://localhost:7474** | Login → `MATCH (n) RETURN n LIMIT 25` — entities after Neo4j step. |
+| **Celery terminal** | Parse → chunk → embed → Qdrant (and ideally Neo4j). |
+
+---
+
+### Technical path (upload → answer)
+
+```text
+UI upload → POST /api/documents/upload
+  → MinIO (file bytes) + Postgres (status=pending)
+  → Redis queue → Celery worker
+      → parse → normalize → chunk (800/100)
+      → embed (text-embedding-3-small, 1536-d)
+      → Qdrant collection "chunks"
+      → Neo4j entities (optional)
+      → Postgres status=complete, chunk_count>0
+
+UI Chat → POST /api/chat
+  → embed question → Qdrant top_k=5
+  → agents (Router→…→Answer→Critic)
+  → answer + citations + debug panel
+```
+
+**Must be running:** infra (Docker) + **uvicorn :8000** + **Celery worker** + **npm start**. Chat needs API; PDF ingest needs Celery.
+
+Your Aadhaar upload is stuck at `processing` / 0 chunks — delete it, restart Celery (to pick up PDF fixes), upload a **text PDF** or `docs/fixtures/sample-rag-fact.txt`, wait for **complete** with chunks > 0, then ask in **Chat**.
+
+### Root cause of the PDF failure
+
+Postgres shows:
+
+`storage_path = local://doc_2ea13f8ab282/...`
+
+That means **MinIO never stored the file**. The backend venv was missing the **`minio` Python package**, so upload silently invented a fake path. The worker then tried MinIO, found nothing → failed.
+
+**Fixed:** installed `minio`, created bucket `ai-documents`, made local fallback write real files, delete now uses Postgres (fixes your 404).
+
+---
+
+### What you must do now
+
+1. **Restart API + Celery** (required so they load the new package):
+```bash
+# stop both (Ctrl+C), then:
+cd ~/Documents/Carrers/AI_Project/enterprise-ai-assistant/backend
+source venv/bin/activate
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+# other terminal:
+celery -A app.workers.document_worker.celery_app worker \
+  --loglevel=info --concurrency=2 --queues=document_processing
+```
+
+2. In UI: **delete** the failed resume → **re-upload** `Resume_BhanuTeja_DS.pdf`.
+
+3. Confirm in MinIO console http://localhost:9001 (`minioadmin` / `minioadmin`) → bucket **`ai-documents`** → `documents/doc_…/original.pdf`.
+
+Worker should log: `Uploaded…` / `Downloaded… N bytes` → chunks > 0 → **complete**.
+
+---
+
+### Postgres & Redis “not loading”
+
+They are **not websites**. Opening `localhost:5433` / `6379` in a browser will not work.
+
+| Service | How to check |
+|---------|----------------|
+| **Postgres** | `psql -h localhost -p 5433 -U ai_user -d ai_assistant` → password `dev_password` |
+| **Redis** | `redis-cli -h localhost -p 6379 ping` → should print `PONG` |
+
+Both are **up and healthy** right now (containers running; `psql` and `PONG` OK).
+
+Browser UIs only for: App `:4200`, API docs `:8000/docs`, Qdrant `:6333`, Neo4j `:7474`, MinIO `:9001`.
+
+That check confirmed **Neo4j has your resume graph** (Document + 3 Chunks, Person, orgs, etc.). The chat call in that run still hit the old bug (`general_chat`, 0 chunks).
+
+That’s already fixed — use **http://localhost:4200/chat** and ask about the resume; you should see retrieved chunks and citations.
+
+### Role of Postgres in this project
+
+Postgres is the **system of record** (structured metadata + chat history). It does **not** store the PDF bytes or the embedding vectors.
+
+| Store | Holds |
+|-------|--------|
+| **Postgres** | Document status, file name, MinIO path, chunk text/metadata, chat sessions/messages |
+| **MinIO** | Original PDF file |
+| **Qdrant** | Embedding vectors for search |
+| **Neo4j** | Entities/relationships (GraphRAG) |
+| **Redis** | Celery task queue (+ short caches) — your `PONG` means Redis is healthy |
+
+Flow for your resume:
+
+1. Upload → row in `documents` (`PENDING` → `PROCESSING` → `COMPLETE`)
+2. Worker writes chunk rows into `chunks`
+3. Chat → rows in `sessions` / `messages`
+
+---
+
+### How to connect (correct CLI)
+
+Don’t paste the arrow/`password` text into the command. Either:
+
+```bash
+PGPASSWORD=dev_password psql -h localhost -p 5433 -U ai_user -d ai_assistant
+```
+
+Or run `psql -h localhost -p 5433 -U ai_user -d ai_assistant` and type `dev_password` when prompted (you’re already at `ai_assistant=#`).
+
+---
+
+### Useful commands (paste at `ai_assistant=#`)
+
+```sql
+-- list tables
+\dt
+
+-- describe a table
+\d documents
+\d chunks
+
+-- your uploads + processing status
+SELECT document_id, file_name, status, chunk_count, storage_path
+FROM documents
+ORDER BY created_at DESC;
+
+-- chunk texts for the successful resume
+SELECT chunk_id, chunk_index, page_number, left(chunk_text, 120) AS preview
+FROM chunks
+WHERE document_id = 'doc_da15a786238a'
+ORDER BY chunk_index;
+
+-- chat history (after you use Chat UI)
+SELECT session_id, role, left(content, 80), created_at
+FROM messages
+ORDER BY created_at DESC
+LIMIT 20;
+
+-- quit
+\q
+```
+
+**Interview one-liner:** Postgres tracks *what* was uploaded and *conversation state*; Qdrant finds *similar* text; MinIO keeps the *file*; Redis runs the *async worker queue*.
+
+### 1) Neo4j — why + how to use it here
+
+**Why Neo4j (not instead of Qdrant):**  
+Qdrant finds *similar text chunks*. Neo4j stores *entities and relationships* (Person → Organization, Document → Chunk, topics, decisions). That’s GraphRAG: better answers for “who / related to / connected to”.
+
+Your DB already has ~87 nodes (`Document`, `Chunk`, `Person`, `Organization`, `Topic`, …) and relationships like `MENTIONS`, `BELONGS_TO_TOPIC`.
+
+**Fix your query** — don’t put `{Document, Chunk…}` after `LIMIT`. Use:
+
+```cypher
+// Everything (small demo)
+MATCH (n) RETURN n LIMIT 50
+
+// Just your resume document
+MATCH (d:Document {file_name: 'Resume_BhanuTeja_DS.pdf'})
+RETURN d
+
+// Document → chunks
+MATCH (c:Chunk)-[:BELONGS_TO|PART_OF|IN_DOCUMENT*0..1]-(d:Document)
+WHERE d.file_name CONTAINS 'Resume' OR c.document_id = 'doc_da15a786238a'
+RETURN c, d LIMIT 25
+
+// Safer generic: all Document + Chunk + Person
+MATCH (n)
+WHERE n:Document OR n:Chunk OR n:Person OR n:Organization
+RETURN n LIMIT 50
+
+// Mentions / links from a chunk
+MATCH (c:Chunk)-[r]->(e)
+WHERE c.document_id = 'doc_da15a786238a'
+RETURN c, r, e LIMIT 50
+
+// Person connected to orgs/topics
+MATCH (p:Person)-[r]-(x)
+RETURN p, r, x LIMIT 50
+```
+
+Login: http://localhost:7474 → user `neo4j` / password `dev_password` → paste Cypher → run ▶.
+
+---
+
+### 2) Your screenshot `{"detail":"Method Not Allowed"}`
+
+Opening `http://localhost:8000/api/chat` in the browser sends a **GET**. Chat only accepts **POST**.
+
+**Easiest UI:** http://localhost:8000/docs → find **POST /api/chat** → Try it out → body:
+
+```json
+{
+  "user_id": "demo",
+  "session_id": "demo-1",
+  "message": "What role and experience does Bhanu Teja have according to the resume?",
+  "stream": false
+}
+```
+
+**Or terminal:**
+
+```bash
+curl -s -X POST http://localhost:8000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "demo",
+    "session_id": "demo-1",
+    "message": "What role and experience does Bhanu Teja have according to the resume?",
+    "stream": false
+  }' | jq
+```
+
+Normal app path: **http://localhost:4200/chat** (not the raw API URL in the address bar).
+
+---
+
+### 3) Debug panel — step-by-step
+
+1. Hard-refresh **http://localhost:4200/chat** (Ctrl+Shift+R).
+2. Click **Debug** (top-right of the chat area — flask icon).
+3. Ask a document question, e.g. *What role and experience does Bhanu Teja have according to the resume?*
+4. After the answer, the right panel shows the pipeline:
+
+| What you see | Pipeline step |
+|--------------|----------------|
+| **Intent** = `doc_question` | Router |
+| **Rewritten query** (if any) | Query rewrite |
+| **Retrieved chunks** > 0 | Retriever (Qdrant) |
+| Similarity / chunk info | Relevant chunks |
+| Answer text + **Sources:** citations | Prompt → LLM → answer with sources |
+| Critic / grounding (if shown) | Guardrails |
+
+If intent is `general_chat` and chunks = 0, retrieval was skipped — ask clearly about the **resume/document**.
+
+**Map:** Chat UI = human test · Debug = agent/RAG internals · `/docs` POST = same API without UI · Neo4j Browser = graph only (not chat).
+
+Everything is working. Here is the complete summary of everything built:
+
+---
+
+## ✅ Complete LangGraph Agentic Workflow — Built & Running
+
+The app is **live at `http://localhost:7860`**. Here's everything that was created:
+
+---
+
+### 🗂️ Project Structure (`langgraph-agent/`)
+
+```
+app/
+├── config.py              — Pydantic Settings (reads .env)
+├── main.py                — FastAPI + SSE streaming endpoints
+├── graph/
+│   ├── state.py           — AgentState TypedDict (all 20 fields + sub-models)
+│   ├── edges.py           — 4 conditional routing functions
+│   └── workflow.py        — StateGraph compilation + graph topology
+├── agents/
+│   ├── query_validator.py — Node 1
+│   ├── router.py          — Node 2
+│   ├── rag_retriever.py   — Node 3
+│   ├── web_searcher.py    — Node 4
+│   ├── human_gate.py      — Node 5 (interrupt/resume)
+│   ├── response_generator.py — Node 6
+│   └── quality_checker.py — Node 7
+└── services/
+    ├── llm_service.py     — chat, structured_chat, embed
+    ├── qdrant_service.py  — async Qdrant search
+    └── tavily_service.py  — web search
+static/index.html          — Complete dark-theme UI (1100+ lines)
+```
+
+---
+
+### 🔗 The 7 Nodes + How They Connect
+
+```
+START → query_validator ──[invalid]──→ END
+              │[valid]
+              ▼
+           router ──[rag]──────────────→ rag_retriever ──┐
+              │[web_search]──→ web_searcher ──────────────┤
+              │[needs_human]→ human_gate ──[rag|web]──────┘
+                                                          │
+                                          response_generator ←──[REVISE, max 3×]
+                                                          │
+                                          quality_checker ──[PASS]──→ END
+```
+
+---
+
+### 🔌 3 FastAPI Endpoints
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/chat` | Start streaming — returns SSE events as each node runs |
+| `POST /api/chat/resume` | Resume after human gate with `Command(resume=answer)` |
+| `GET /api/thread/{id}` | Inspect full graph state for any thread |
+
+---
+
+### 🧑 Human-in-the-Loop (the key LangGraph feature)
+
+In `human_gate.py`, a single call does all the magic:
+```python
+human_response = interrupt({"question": "Should I search docs or web?"})
+# ↑ Graph PAUSES here. Client gets an SSE "interrupt" event.
+# ↑ Client shows a question box. User types answer. Hits Submit.
+# ↑ Client POSTs /api/chat/resume with thread_id + answer
+# ↑ Graph RESUMES from this exact line. human_response = "search my docs"
+```
+
+---
+
+### 🔁 Quality Revision Loop
+
+`quality_checker` uses **LLM-as-judge**: it evaluates groundedness + completeness and routes back to `response_generator` with specific feedback until the answer is good (or max 3 retries).
+
+---
+
+### ✅ Test Results
+- **RAG path**: All 5 nodes fired, SSE streamed correctly, `verdict=PASS score=1.00`
+- **Invalid query**: `query_validator` detected gibberish → `is_valid=False` → graph went straight to `END` (3 steps, not 7)
+- **Thread inspection**: `/api/thread/test-001` returns full preserved state via `MemorySaver`
+- **All 15 syntax checks**: PASSED ✓
+- **All 6 edge functions**: Routing logic verified ✓
+- **Qdrant health**: `15 points, status=green` ✓
+
+---
+
+### 🚀 Run Commands
+
+```bash
+cd enterprise-ai-assistant/langgraph-agent
+source venv/bin/activate
+uvicorn app.main:app --host 0.0.0.0 --port 7860 --reload
+# Open: http://localhost:7860
+```
+
+> **Tavily note**: Add `TAVILY_API_KEY=` in `.env` (free at tavily.com) to activate the web search path. Without it, the web_searcher gracefully returns a "not configured" message.
+
+**Port error:** LangGraph is **already running** on `7860` (from earlier). Don’t start uvicorn again — open **http://localhost:7860**. To restart later: `fuser -k 7860/tcp` then start uvicorn.
+
+---
+
+### Do you need Docker + those other terminals?
+
+| Goal | What you need |
+|------|----------------|
+| **Only ask questions** (docs already in Qdrant) | Docker **Qdrant** + LangGraph on `:7860` |
+| **Upload a new PDF** | Full Docker infra + API `:8000` + **Celery worker** + Angular `:4200` |
+
+Your machine already has Docker (Postgres, Redis, Qdrant, MinIO, Neo4j), enterprise API, Angular, and LangGraph up. For chat you mainly open browsers.
+
+LangGraph does **not** upload docs — it reads the shared Qdrant collection `chunks` filled by the enterprise pipeline.
+
+---
+
+### Hands-on HTML guide (created)
+
+Open this file in the browser:
+
+`file:///home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/docs/hands-on/03-langgraph-agent-e2e.html`
+
+Or from the project:
+
+```bash
+xdg-open /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/docs/hands-on/03-langgraph-agent-e2e.html
+```
+
+It covers:
+
+1. What must run vs optional  
+2. Fix for “address already in use”  
+3. Browser map of every URL  
+4. Upload one PDF on `:4200/documents`  
+5. Verify in Qdrant / MinIO / Postgres / Neo4j  
+6. Ask one prompt on `:7860` and what each panel shows  
+7. Node-by-node technical path for that prompt  
+
+---
+
+### Fast path right now
+
+1. **Upload (if needed):** http://localhost:4200/documents → wait until status = complete  
+2. **Check vectors:** http://localhost:6333/dashboard → collection `chunks`  
+3. **Ask:** http://localhost:7860 → e.g. `What are Bhanu Teja's skills and work experience?`  
+4. Watch left graph (nodes), center answer, right state inspector  
+
+If upload stays on “processing”, start Celery (required for PDF → chunks):
+
+```bash
+cd ~/Documents/Carrers/AI_Project/enterprise-ai-assistant/backend
+source venv/bin/activate
+celery -A app.workers.document_worker.celery_app worker \
+  --loglevel=info --concurrency=2 --queues=document_processing
+```
+
+**Right now: run nothing.** Everything is already up.
+
+| What | Status |
+|------|--------|
+| Docker (postgres, redis, qdrant, minio, neo4j) | Up |
+| Terminal 1 — API `:8000` | Running |
+| Terminal 2 — Celery worker | Running |
+| Terminal 3 — Angular `:4200` | Running |
+| **Terminal 4 — LangGraph `:7860`** | Running (that’s why port was busy) |
+
+Just open:
+- Upload docs → http://localhost:4200/documents  
+- LangGraph chat → http://localhost:7860  
+
+---
+
+### After reboot / if something dies — full command set
+
+**0. Docker (once)**
+```bash
+cd /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant
+docker-compose -f docker-compose.dev.yml up -d
+docker-compose -f docker-compose.dev.yml ps
+```
+
+**Terminal 1 — API**
+```bash
+cd /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/backend
+source venv/bin/activate
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+**Terminal 2 — Celery (needed for PDF upload)**
+```bash
+cd /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/backend
+source venv/bin/activate
+celery -A app.workers.document_worker.celery_app worker \
+  --loglevel=info --concurrency=2 --queues=document_processing
+```
+
+**Terminal 3 — Angular UI**
+```bash
+cd /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/frontend
+npm start
+```
+
+**Terminal 4 — LangGraph (new)**
+```bash
+cd /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/langgraph-agent
+source venv/bin/activate
+# only if "Address already in use":
+# fuser -k 7860/tcp
+uvicorn app.main:app --host 0.0.0.0 --port 7860 --reload
+```
+
+---
+
+**Minimal if you only want LangGraph chat** (docs already indexed): Docker Qdrant + Terminal 4 only.
+
+### Why the error?
+
+You did **not** start it — **I did**, earlier in this chat while building/testing the app:
+
+```bash
+python3 -m uvicorn app.main:app --host 0.0.0.0 --port 7860 --log-level info &
+```
+
+That process is still alive:
+
+| Field | Value |
+|--------|--------|
+| PID | `1861017` |
+| Started | today **17:59** |
+| Command | `python3 -m uvicorn app.main:app --host 0.0.0.0 --port 7860` |
+
+So when you run uvicorn again → **Address already in use**.
+
+### Why does the UI still load?
+
+Because that background server is already serving http://localhost:7860. Opening the URL hits **that** process, not a new one from your terminal.
+
+---
+
+### Fix: stop it, then start it yourself
+
+```bash
+# stop the old background server
+kill 1861017
+# or: fuser -k 7860/tcp
+
+# confirm port is free
+lsof -i :7860
+
+# start in YOUR terminal (with --reload)
+cd ~/Documents/Carrers/AI_Project/enterprise-ai-assistant/langgraph-agent
+source venv/bin/activate
+uvicorn app.main:app --host 0.0.0.0 --port 7860 --reload
+```
+
+Then open http://localhost:7860 again — now it’s **your** terminal process.
+
+Want me to kill PID `1861017` for you now?
+
+### 2) Human Gate error — **not correct** (bug, now fixed)
+
+Routing was right (`needs_human`). The crash:
+
+`Called get_config outside of a runnable context`
+
+came from LangGraph 1.2: `interrupt()` does **not** work with async `astream()`. That’s why the purple Human Gate never appeared.
+
+**Fix applied:** sync `stream()` + wrap async nodes + sync `human_gate`.
+
+**Restart LangGraph** (reload may not rebuild the cached graph):
+
+```bash
+# in langgraph-agent terminal: Ctrl+C, then:
+cd ~/Documents/Carrers/AI_Project/enterprise-ai-assistant/langgraph-agent
+source venv/bin/activate
+uvicorn app.main:app --host 0.0.0.0 --port 7860 --reload
+```
+
+Retest: `Should I use my documents or the internet for AI agents?`  
+→ purple Human Gate panel → answer e.g. `use my documents` → continues to RAG.
+
+---
+
+### 1) Configure Tavily (web search) — step by step
+
+**What Tavily is:** a search API that returns clean snippets + URLs (used by `web_searcher`).
+
+**Where config lives:** only in LangGraph’s `.env` (not Angular, not Docker).
+
+#### Step A — Get a key
+1. Open https://tavily.com → Sign up  
+2. Dashboard → copy **API Key** (looks like `tvly-...`)
+
+#### Step B — Put it in `.env`
+```bash
+nano ~/Documents/Carrers/AI_Project/enterprise-ai-assistant/langgraph-agent/.env
+```
+
+Set:
+```bash
+TAVILY_API_KEY=tvly-your-real-key-here
+```
+
+(Leave other keys as they are: `OPENAI_API_KEY`, `OPENAI_API_BASE`, `QDRANT_URL`, etc.)
+
+#### Step C — Restart LangGraph
+Settings load at startup — restart uvicorn after editing `.env`.
+
+#### Step D — Verify
+```bash
+curl -s http://localhost:7860/api/health | python3 -m json.tool
+```
+Expect: `"tavily": { "configured": true }`
+
+#### Step E — Test in UI
+Ask: `What are the latest AI trends in 2026?`  
+Expect: route `web_search`, real titles/URLs — **not** `[Tavily not configured]`.
+
+---
+
+### How “configure everything” maps
+
+| Setting | File | Used by |
+|---------|------|---------|
+| `OPENAI_API_KEY` / `OPENAI_API_BASE` | `langgraph-agent/.env` | All LLM nodes + embeddings |
+| `QDRANT_URL` / `QDRANT_COLLECTION` | same `.env` | RAG (shared with enterprise `chunks`) |
+| `TAVILY_API_KEY` | same `.env` | Web search only |
+| Docker Postgres/Redis/MinIO | `docker-compose.dev.yml` | Upload pipeline only (not LangGraph chat) |
+
+**Flow:** `.env` → `app/config.py` (`Settings`) → `tavily_service.py` / `llm_service.py` / `qdrant_service.py`.
+
+Without `TAVILY_API_KEY`, web path still runs but returns a placeholder — that’s expected, not a graph bug.
+
+**Use the `default` / `dev` key** — that’s the correct one. Tavily says one key works for all APIs; `dev` is fine for learning.
+
+### Done for you
+- Key saved in `langgraph-agent/.env` as `TAVILY_API_KEY=...` (gitignored — not in source code)
+- LangGraph restarted
+- Health shows `"tavily": { "configured": true }`
+- Live test passed: web search returned MIT / IBM / ByteByteGo links and a grounded answer
+
+**Security:** You pasted the key in chat. If this chat is shared, rotate it in Tavily → API Keys → create new / delete old, then update `.env` and restart.
+
+---
+
+### How Tavily works (simple)
+
+```
+Your question
+   → Router chooses web_search
+   → web_searcher calls Tavily API with your key
+   → Tavily searches the live web, returns clean snippets + URLs
+   → response_generator answers using those snippets
+   → quality_checker checks grounding
+```
+
+Without a key → placeholder `[Tavily not configured]`.  
+With a key → real articles (as in the test above).
+
+---
+
+### How it’s configured in this project
+
+| Layer | What |
+|--------|------|
+| Dashboard | https://app.tavily.com → API Keys → copy `tvly-dev-...` |
+| Config file | `langgraph-agent/.env` → `TAVILY_API_KEY=...` |
+| Loader | `app/config.py` → `settings.tavily_api_key` |
+| Code | `app/services/tavily_service.py` → `AsyncTavilyClient` |
+| Node | `app/agents/web_searcher.py` |
+
+After any `.env` change: **restart uvicorn**.
+
+---
+
+### How you test in UI
+
+1. Open http://localhost:7860  
+2. Ask: `What are the latest AI trends in 2026?`  
+3. Check:
+   - Route badge → **Web Search**
+   - Trace → `web_searcher` → Got N web results (not Tavily not configured)
+   - Answer cites real URLs
+   - State Inspector → Web Results > 0
+
+Optional CLI:
+```bash
+curl -s http://localhost:7860/api/health | python3 -m json.tool
+# tavily.configured should be true
+```
+
+---
+
+### Your keys at a glance
+
+| Key type | Meaning | Use |
+|----------|---------|-----|
+| **dev** (`tvly-dev-...`) | Development / free Researcher plan | Learning & this project ✅ |
+| Production key (if offered later) | Higher limits / prod apps | Later, when you deploy |
+
+You don’t need MCP / “Generate MCP Link” for this app — that’s for Cursor/IDE plugins, not required here.
+
+Credits: Researcher plan ≈ **1000/month**; each search uses some credits (dashboard Overview shows usage).
+
+### Short answer
+
+**Yes — the Human Gate flow was correct.**  
+What failed was **after** your choice:
+
+| Your choice | What should happen | What went wrong |
+|-------------|--------------------|-----------------|
+| `💬 live web` | → `web_searcher` → Tavily → answer | Tavily hung (~60s) → `[Tavily error]` → weak “no info” answer |
+| `💬 search uploaded documents` | → `rag_retriever` → answer | Flow worked, but it searched the **meta question** against **resumes**, so the answer felt useless |
+
+The red `get_config...` banner was from the older interrupt bug (or a stale UI message). Resume itself was working in your later runs.
+
+---
+
+### Why it felt like “nothing returned”
+
+1. **Live web:** search failed → generator only saw an error placeholder.  
+2. **Documents:** you *did* get a reply (your screenshot shows it), but resumes don’t answer “docs vs internet?”, so it looked empty/wrong.
+
+---
+
+### Fixes applied (server restarted)
+
+1. **Tavily → sync client** (avoids async timeout under Human Gate resume)  
+2. **After Human Gate, rewrite the search query** (so web/RAG get a useful query)  
+3. **Response generator** respects your choice and answers the original advisory question better  
+
+Verified:
+- `live web` → 6 real web results → solid answer  
+- `search uploaded documents` → RAG → answer about RAG/docs  
+
+---
+
+### Retest now
+
+1. Hard refresh http://localhost:7860  
+2. **+ New Chat**  
+3. Ask: `Should I use my documents or the internet for AI agents?`  
+4. Try both:
+   - `live web` → expect real URLs, not `[Tavily error]`  
+   - `search uploaded documents` → expect a clear docs/RAG explanation  
+
+**Tip:** For fact questions about a person, ask directly (e.g. `What are Neha Pukale's skills?`) — Human Gate is for ambiguous “docs **or** web?” cases.
+
+Routing is a **2-layer decision**: the **router node** writes `state["route"]`, then a **conditional edge** maps that string to the next node. Nothing magical — deterministic code + optional LLM.
+
+---
+
+## Interview one-liner
+
+> “We don’t hard-code RAG vs web inside the retriever. A dedicated **router node** sets `route` to `rag | web_search | needs_human` using **regex heuristics first**, then an **LLM structured classifier** if unclear. LangGraph’s **conditional edge** reads that field and jumps to `rag_retriever`, `web_searcher`, or `human_gate`.”
+
+---
+
+## Where it’s defined in code
+
+| Piece | File | Job |
+|--------|------|-----|
+| Decide route | `app/agents/router.py` | Writes `route`, `route_reasoning`, `human_question` |
+| Wire next node | `app/graph/edges.py` → `route_after_router` | Maps route → node name |
+| Register edges | `app/graph/workflow.py` | `add_conditional_edges("router", ...)` |
+| After human answers | `app/agents/human_gate.py` | Re-sets `route` from human text |
+| Post-human edge | `route_after_human` | RAG or web only (no second human gate) |
+
+---
+
+## Step-by-step flow
+
+```
+validated_query
+      │
+      ▼
+┌─────────────┐
+│ router_node │  ← DECISION happens here
+└──────┬──────┘
+       │ writes state["route"] = "rag" | "web_search" | "needs_human"
+       ▼
+route_after_router(state)   ← only READS state["route"]
+       │
+       ├── "rag"         → rag_retriever
+       ├── "web_search"  → web_searcher
+       └── "needs_human" → human_gate → (human answers) → rag OR web
+```
+
+Conditional edge (LangGraph wiring):
+
+```71:85:langgraph-agent/app/graph/edges.py
+def route_after_router(state: AgentState) -> str:
+    route = state.get("route", "rag")
+    ...
+    if route == "web_search":
+        return "web_search"
+    if route == "needs_human":
+        return "needs_human"
+    return "rag"  # default
+```
+
+In `workflow.py` those return values map to real nodes:
+`rag → rag_retriever`, `web_search → web_searcher`, `needs_human → human_gate`.
+
+---
+
+## How `router_node` decides (the important part)
+
+### Layer 1 — Heuristics (fast, no LLM, ~0 ms)
+
+```72:88:langgraph-agent/app/agents/router.py
+def _heuristic_route(query: str) -> tuple[str, str] | tuple[None, str]:
+    if _FORCE_HUMAN.search(query):
+        return ("needs_human", "Should I search your uploaded documents, or look this up on the live web?")
+    if _GREET_ONLY.match(query.strip()):
+        return "web_search", ""
+    if _DOC_HINTS.search(query) and not _WEB_HINTS.search(query):
+        return "rag", ""
+    if _WEB_HINTS.search(query) and not _DOC_HINTS.search(query):
+        return "web_search", ""
+    return None, ""  # unclear → LLM
+```
+
+| Regex | Meaning | Example → route |
+|--------|---------|------------------|
+| `_FORCE_HUMAN` | Explicit “docs **or** web / internet” | “Should I use my documents or the internet…?” → **needs_human** |
+| `_DOC_HINTS` only | resume, CV, skill, experience, pdf… | “Neha Pukale skills?” → **rag** |
+| `_WEB_HINTS` only | latest, 2026, news, today, stock… | “Latest AI trends in 2026?” → **web_search** |
+| Both / neither | Ambiguous | Fall through to LLM |
+| Greeting only | hi/hello | **web_search** (general) |
+
+**Why heuristics first?** Cheaper, deterministic, fixes LLM misroutes (we saw that on the enterprise app too). Trace shows `route=rag (heuristic)`.
+
+### Layer 2 — LLM structured classifier (only if heuristics return `None`)
+
+- Prompt lists exactly 3 routes; `needs_human` is **last resort**
+- Response forced into Pydantic `RouteSchema` (`route`, `reasoning`, `human_question`)
+- Invalid route string → forced to `"rag"`
+- LLM failure → fallback `"rag"`
+
+```167:179:langgraph-agent/app/agents/router.py
+result: RouteSchema = await llm_service.structured_chat(
+    messages=[...],
+    response_format=RouteSchema,
+)
+valid_routes = {"rag", "web_search", "needs_human"}
+route = result.route if result.route in valid_routes else "rag"
+```
+
+---
+
+## What each route means (say this in interviews)
+
+| `route` | Next node | When |
+|---------|-----------|------|
+| `rag` | `rag_retriever` | Answer lives in uploaded PDFs (Qdrant) |
+| `web_search` | `web_searcher` | Needs live/public web (Tavily) |
+| `needs_human` | `human_gate` | Choosing wrong path would mislead → ask user |
+
+Human gate then classifies the reply (`document`/`uploaded` → rag; `web`/`internet` → web_search) and may **rewrite** `validated_query` so retrieval isn’t stuck on the meta question.
+
+---
+
+## Concrete examples from your demos
+
+| Prompt | Decision layer | Result |
+|--------|----------------|--------|
+| “What are Neha Pukale's skills?” | Heuristic `_DOC_HINTS` | `rag` |
+| “Latest AI trends in 2026?” | Heuristic `_WEB_HINTS` | `web_search` |
+| “Should I use my documents or the internet for AI agents?” | Heuristic `_FORCE_HUMAN` | `needs_human` → you pick → rag/web |
+| “Explain transformers architecture” (no doc/web keywords) | LLM layer | usually `web_search` or `rag` per prompt rules |
+
+---
+
+## Why not put this logic inside the retriever?
+
+Separation of concerns:
+1. **Router** = policy (where to get evidence)
+2. **Edges** = graph wiring
+3. **Retriever / Tavily** = execution
+
+That’s why the UI can show `route=rag (heuristic)` in the trace — easy to debug and explain.
+
+---
+
+## 20-second spoken answer
+
+> “After validation, the router runs. First regex heuristics: doc keywords → RAG, freshness keywords → web, ‘docs or internet’ → human gate. If none match, an LLM returns a structured route enum. LangGraph conditional edges just read `state.route` and send the graph to `rag_retriever`, `web_searcher`, or `human_gate`. After the human answers, we overwrite `route` and continue.”
+
+### What is MCP? (short)
+
+**MCP = Model Context Protocol** — a standard “USB plug” for AI tools.
+
+- **Not** a model, not LangGraph, not Qdrant  
+- A **client ↔ server protocol** so any AI host can **discover** and **call** tools  
+- **Server** = owns tools · **Client** = lists/calls them · **Transport** = usually stdio (subprocess)
+
+---
+
+### What we implemented in this repo
+
+| Piece | Location |
+|--------|----------|
+| MCP **server** (4 tools) | `langgraph-agent/mcp_server/server.py` |
+| MCP **client** | `langgraph-agent/app/services/mcp_client.py` |
+| Hands-on HTTP | `GET /api/mcp/tools`, `POST /api/mcp/call` |
+| Optional LangGraph wiring | `USE_MCP_TOOLS=true` → RAG/web go through MCP |
+| Cursor config example | `mcp_server/cursor-mcp.example.json` |
+| **Full beginner HTML** | `docs/hands-on/04-mcp-from-zero-e2e.html` |
+
+**Tools:** `echo_demo` · `qdrant_info` · `search_documents` · `web_search`
+
+Verified: list tools = 4, echo works, Qdrant search via MCP returns Neha’s CV.
+
+---
+
+### Open the guide
+```bash
+xdg-open ~/Documents/Carrers/AI_Project/enterprise-ai-assistant/docs/hands-on/04-mcp-from-zero-e2e.html
+```
+
+---
+
+### Hands-on (quick)
+
+```bash
+cd ~/Documents/Carrers/AI_Project/enterprise-ai-assistant/langgraph-agent
+source venv/bin/activate
+uvicorn app.main:app --host 0.0.0.0 --port 7860 --reload
+
+# Discover tools
+curl -s http://localhost:7860/api/mcp/tools | python3 -m json.tool
+
+# Call tools
+curl -s -X POST http://localhost:7860/api/mcp/call \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"echo_demo","arguments":{"message":"hello MCP"}}' | python3 -m json.tool
+
+curl -s -X POST http://localhost:7860/api/mcp/call \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"search_documents","arguments":{"query":"Neha skills","top_k":3}}' | python3 -m json.tool
+```
+
+Optional LangGraph-over-MCP: set `USE_MCP_TOOLS=true` in `.env`, restart, ask in http://localhost:7860 — trace shows `via=MCP`.
+
+---
+
+### How it fits with LangGraph
+
+```
+Router decides: rag | web | human
+        ↓
+Retriever/Searcher either:
+  A) direct services (default), or
+  B) MCP client → MCP server tool → Qdrant/Tavily  (USE_MCP_TOOLS=true)
+```
+
+LangGraph = **when/what path**. MCP = **standard way to expose/call the tools**.
+
+Stopped. **Port 7860 is free** — you can start it manually now.
+
+### Where it came from
+I started it earlier in this Cursor session (background) while testing MCP:
+
+```bash
+cd .../langgraph-agent
+source venv/bin/activate
+nohup uvicorn app.main:app --host 0.0.0.0 --port 7860 --reload > /tmp/langgraph-7860.log 2>&1 &
+```
+
+CWD was `langgraph-agent/`, PID was ~1472497 (started Tue Sep 15 16:40).
+
+### Command to stop it yourself next time
+```bash
+fuser -k 7860/tcp
+```
+
+Or:
+```bash
+kill $(lsof -t -i:7860)
+```
+
+Check it’s free:
+```bash
+lsof -i :7860 || echo "Port 7860 is free"
+```
+
+### Your manual start
+```bash
+cd ~/Documents/Carrers/AI_Project/enterprise-ai-assistant/langgraph-agent
+source venv/bin/activate
+uvicorn app.main:app --host 0.0.0.0 --port 7860 --reload
+```
+
+### Why you still see `via=direct`
+
+| File | Value | Used by app? |
+|------|--------|----------------|
+| `.env` | `USE_MCP_TOOLS=false` | **Yes** ← this is why |
+| `.env.example` | `USE_MCP_TOOLS=true` | **No** (template only) |
+
+Code in `rag_retriever.py` is correct. Settings load from **`.env`**, so you get `via=direct`.
+
+**Fix:**
+```bash
+# edit the REAL env file, not .env.example
+nano ~/Documents/Carrers/AI_Project/enterprise-ai-assistant/langgraph-agent/.env
+# set:
+USE_MCP_TOOLS=true
+```
+Then **restart** uvicorn (Ctrl+C → start again), then ask again. Trace should show `via=MCP`.
+
+Quick check after restart:
+```bash
+curl -s http://localhost:7860/api/health | python3 -c 'import sys,json; print(json.load(sys.stdin)["services"]["mcp"])'
+# should show: "use_mcp_tools": true
+```
+
+---
+
+### Interview: “Without MCP we can still search — so why MCP?”
+
+You’re right: **search does not need MCP**.  
+In this project MCP is **optional packaging**, not the search engine.
+
+#### Wrong mental model
+> “MCP decides whether to use RAG or web.”
+
+**No.** That’s the **LangGraph router**.
+
+#### Right mental model
+
+| Layer | Job |
+|--------|-----|
+| **LangGraph** | *When* / *which path* (rag vs web vs human) |
+| **Qdrant / Tavily** | *Actually* search |
+| **MCP** | *Standard way to expose* those capabilities as tools other AI hosts can call |
+
+```
+Without MCP (what you have by default):
+  LangGraph ──direct import──► qdrant_service / tavily_service
+
+With MCP (USE_MCP_TOOLS=true):
+  LangGraph ──MCP client──► MCP server ──► same qdrant/tavily
+
+Also without LangGraph:
+  Cursor / Claude Desktop ──MCP──► same MCP server tools
+```
+
+#### Spoken answer (30 seconds)
+
+> “MCP doesn’t replace RAG. Our LangGraph router still decides rag vs web.  
+> Without MCP, nodes call Qdrant/Tavily in-process — that’s fine and faster.  
+> MCP wraps the *same* tools behind a standard protocol so **any** MCP client — Cursor, another agent, our `/api/mcp/call` — can discover and call `search_documents` / `web_search` without importing our Python modules.  
+> So MCP is for **tool interoperability and reuse**, not for making search possible.”
+
+#### If they push: “Then why add it?”
+
+Good answers:
+1. **Reuse** — one tool server, many hosts (LangGraph + Cursor + future bots)  
+2. **Decoupling** — host doesn’t need our internal Python APIs  
+3. **Standard** — industry direction for AI tool plugins (like USB for tools)  
+4. **In our demo** — toggle `USE_MCP_TOOLS` to show both paths; default stays direct for speed  
+
+#### What MCP is *not*
+- Not a vector DB  
+- Not better search quality  
+- Not the router  
+- Not required for this app to answer Neha’s resume  
+
+---
+
+### Map to your screenshot
+
+- `route=rag (heuristic)` → **LangGraph** decided  
+- `Retrieved 5 chunks via=direct` → searched Qdrant **without** MCP (because `.env` is still `false`)  
+- Answer still works → proves **MCP isn’t what makes RAG work**
+
+After you set `.env` to `true` and restart, same flow should say `via=MCP` — same Qdrant, different *call path*.
+Done — set in the **correct** file:
+
+`langgraph-agent/.env` → `USE_MCP_TOOLS=true`
+
+**Do not add it to** `enterprise-ai-assistant/.env` (the one you have open). That file is for the Angular/backend stack (`:8000`). LangGraph only loads:
+
+`enterprise-ai-assistant/langgraph-agent/.env`
+
+Restart uvicorn, then ask again — trace should show `via=MCP`.
+
+### Short answer
+
+**Your chat did not fail.**  
+Look at the same log: validator OK → router `rag` → MCP started → **Qdrant 5 chunks** → quality **PASS**.
+
+The red block is a **cleanup warning**, not a failed search.
+
+---
+
+### Why it appears
+
+```
+LangGraph uses sync stream (needed for Human Gate)
+   → each async node runs in a short-lived event loop (asyncio.run / new loop)
+   → AsyncOpenAI / httpx finishes the HTTP call successfully
+   → then tries to close the connection AFTER the loop is already closed
+   → logs: RuntimeError: Event loop is closed
+```
+
+Same pattern for web search. Request still works; logs look scary.
+
+---
+
+### Fix applied
+
+1. **LLM** → sync `OpenAI` client (no async httpx cleanup)  
+2. **Qdrant** → sync `QdrantClient`  
+3. Safer event-loop shutdown in LangGraph wrappers + MCP server  
+
+**Restart uvicorn** (Ctrl+C, start again) so the fix loads. Those `Event loop is closed` lines should mostly disappear.
+
+---
+
+### Interview one-liner
+
+> “That log is a known side effect of running async HTTP clients inside short-lived event loops for LangGraph’s sync interrupt path. The tool call already succeeded; it was client cleanup after the loop closed. We switched to sync OpenAI/Qdrant clients to remove the noise.”
+
+Everything is verified. Here's a complete summary of what was implemented:
+
+---
+
+## Everything That Was Built
+
+### New Files (15 total)
+
+**Observability:**
+- `app/observability/langfuse_client.py` — Full Langfuse SDK wrapper: `create_trace`, `span`, `generation`, `event`, `score`, `flush`. Explains Trace/Span/Generation/Event hierarchy with comments.
+
+**Database:**
+- `app/database/schema.sql` — PostgreSQL DDL for 5 tables (`users`, `conversations`, `sessions`, `messages`, `memory`) with pgvector indexes and triggers
+- `app/database/db_client.py` — Thread-safe `psycopg2` connection pool with `execute`, `fetchall`, `fetchone`, and vector search
+
+**Memory:**
+- `app/memory/conversation_manager.py` — Full CRUD: get/create users, conversations, sessions, save messages, fetch history
+- `app/memory/context_manager.py` — All 5 strategies: `last_n_messages`, `sliding_window`, `summarize_old`, `semantic_retrieve`, `hybrid` (production default)
+- `app/memory/memory_retrieval.py` — Store/retrieve long-term memories with pgvector cosine search, auto-extraction from conversations
+
+**Fine-Tuning:**
+- `app/fine_tuning/dataset_builder.py` — 20 sample examples, `build_jsonl_dataset`, `split_dataset`, `validate_dataset`, `estimate_cost`
+- `app/fine_tuning/pipeline.py` — Real OpenAI API code (`upload_dataset`, `start_finetuning`, `poll_status`, `deploy`) with `USE_SIMULATION=True` by default
+- `app/fine_tuning/evaluation.py` — Base vs fine-tuned comparison on 5 metrics, Langfuse experiment tags (`experiment:base-model` vs `experiment:fine-tuned-model`)
+
+**Infrastructure:**
+- `docker-compose.langfuse.yml` — Self-hosted Langfuse v3 (6 containers: server, worker, Postgres, ClickHouse, Redis, MinIO)
+
+**HTML Guide:**
+- `docs/hands-on/05-observability-memory-finetuning.html` — 15-tab interactive developer lab (98KB)
+
+### Modified Files (9 total)
+- `requirements.txt` — added `langfuse`, `psycopg2-binary`, `pgvector`
+- `.env` — added Langfuse + PostgreSQL vars
+- `app/config.py` — 8 new settings with `conversation_db_dsn` property
+- `app/graph/state.py` — 6 new fields: `user_id`, `conversation_id`, `session_id`, `langfuse_trace_id`, `conversation_context`, `model_name`
+- `app/services/llm_service.py` — added `chat_with_usage()` and `structured_chat_with_usage()` returning token counts
+- All 7 agent nodes — each wrapped with Langfuse spans/generations/events/scores
+- `app/main.py` — full request flow with conversation history, memory, Langfuse lifecycle
+
+### Startup Steps
+
+```bash
+# 1. Start Langfuse
+docker compose -f docker-compose.langfuse.yml up -d
+# Open http://localhost:3000 → create project → copy keys to .env
+
+# 2. Apply schema
+psql -h localhost -p 5433 -U ai_user -d ai_assistant -f app/database/schema.sql
+
+# 3. Install deps
+source venv/bin/activate && pip install langfuse psycopg2-binary pgvector
+
+# 4. Start app
+uvicorn app.main:app --host 0.0.0.0 --port 7860 --reload
+
+# 5. Open HTML guide
+open docs/hands-on/05-observability-memory-finetuning.html
+```
+
+================================================================================
+LANGFUSE + MEMORY + FINE-TUNING — FULL HANDS-ON COMMANDS (copy-paste)
+================================================================================
+
+YOUR EXISTING STACK (keep as-is — Terminal 0–3):
+
+# Terminal 0 — infra (Postgres 5433, Qdrant, Redis, Neo4j, MinIO)
+cd /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant
+docker-compose -f docker-compose.dev.yml up -d
+docker-compose -f docker-compose.dev.yml ps
+
+# Terminal 1 — Enterprise API
+cd /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/backend
+source venv/bin/activate
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+# Terminal 2 — Celery worker (PDF / docs)
+cd /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/backend
+source venv/bin/activate
+celery -A app.workers.document_worker.celery_app worker \
+  --loglevel=info --concurrency=2 --queues=document_processing
+
+# Terminal 3 — Angular UI
+cd /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/frontend
+npm start
+
+──────────────────────────────────────────────────────────────────────────────
+NEW — ONE-TIME SETUP (run once, then skip next time)
+──────────────────────────────────────────────────────────────────────────────
+
+# A) Install new Python packages into LangGraph venv
+cd /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/langgraph-agent
+source venv/bin/activate
+pip install "langfuse>=2.0,<3" psycopg2-binary pgvector
+
+# B) Start Langfuse (self-hosted) — NEW Terminal 4 / leave running
+cd /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/langgraph-agent
+docker compose -f docker-compose.langfuse.yml up -d
+docker compose -f docker-compose.langfuse.yml ps
+# Wait ~30–60s, then open: http://localhost:3000
+
+# C) Langfuse UI keys (do this in browser once)
+#    1. Open http://localhost:3000
+#    2. Sign up (local, no email needed)
+#    3. Create organisation + project (e.g. "langgraph-agent")
+#    4. Settings → API Keys → Create → copy PUBLIC + SECRET
+#    5. Paste into langgraph-agent/.env:
+#         LANGFUSE_PUBLIC_KEY=pk-lf-...
+#         LANGFUSE_SECRET_KEY=sk-lf-...
+#         LANGFUSE_HOST=http://localhost:3000
+#         LANGFUSE_ENABLED=true
+
+# D) Apply conversation/memory schema to SAME Postgres (port 5433)
+#    (dev-postgres must already be up from docker-compose.dev.yml)
+cd /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/langgraph-agent
+PGPASSWORD=dev_password psql -h localhost -p 5433 -U ai_user -d ai_assistant \
+  -f app/database/schema.sql
+
+# Verify tables:
+PGPASSWORD=dev_password psql -h localhost -p 5433 -U ai_user -d ai_assistant \
+  -c "\dt" | grep -E "users|conversations|sessions|messages|memory"
+
+──────────────────────────────────────────────────────────────────────────────
+EVERY DAY — start LangGraph (Terminal 5)
+──────────────────────────────────────────────────────────────────────────────
+
+cd /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/langgraph-agent
+source venv/bin/activate
+uvicorn app.main:app --host 0.0.0.0 --port 7860 --reload
+
+# UI:          http://localhost:7860/
+# Health:      http://localhost:7860/api/health
+# Langfuse:    http://localhost:3000
+# HTML guide:  file:///home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/docs/hands-on/05-observability-memory-finetuning.html
+
+──────────────────────────────────────────────────────────────────────────────
+HOW TO EXPERIMENT (like LangGraph hands-on)
+──────────────────────────────────────────────────────────────────────────────
+
+The HTML guide is a LEARNING LAB (simulated demos inside the page).
+The REAL experiment is: LangGraph UI + Langfuse dashboard + DB checks.
+
+STEP 1 — Open both in browser
+  A) http://localhost:7860/          ← chat / graph UI (real)
+  B) http://localhost:3000           ← Langfuse traces (real)
+  C) Open HTML guide in browser:
+     xdg-open /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/docs/hands-on/05-observability-memory-finetuning.html
+     (or File → Open File → 05-observability-memory-finetuning.html)
+
+STEP 2 — Experiment: Langfuse tracing
+  1. In LangGraph UI send: What are Neha Pukale's skills?
+  2. In Langfuse → Traces → refresh → open newest trace
+  3. Expand: query_validation → routing → rag_retrieval → response_generation → quality_check
+  4. Check tokens + cost on llm_call generation
+  Expected: every node appears as a span; quality_score on the trace
+
+STEP 3 — Experiment: multi-user conversation history
+  # User 1
+  curl -N -X POST http://localhost:7860/api/chat \
+    -H "Content-Type: application/json" \
+    -d '{"query":"What is RAG?","user_id":"user_demo_1"}'
+
+  # Copy X-Conversation-ID from response headers, then follow-up:
+  curl -N -X POST http://localhost:7860/api/chat \
+    -H "Content-Type: application/json" \
+    -d '{"query":"How does chunking work in that?","user_id":"user_demo_1","conversation_id":"PASTE_CONV_ID"}'
+
+  # User 2 (separate history — should NOT see User 1 messages)
+  curl -N -X POST http://localhost:7860/api/chat \
+    -H "Content-Type: application/json" \
+    -d '{"query":"What is LangGraph?","user_id":"user_demo_2"}'
+
+  # List conversations
+  curl http://localhost:7860/api/users/user_demo_1/conversations
+  curl http://localhost:7860/api/users/user_demo_2/conversations
+
+STEP 4 — Experiment: inspect DB
+  PGPASSWORD=dev_password psql -h localhost -p 5433 -U ai_user -d ai_assistant \
+    -c "SELECT u.name, c.title, c.message_count FROM conversations c JOIN users u ON u.id=c.user_id;"
+
+  PGPASSWORD=dev_password psql -h localhost -p 5433 -U ai_user -d ai_assistant \
+    -c "SELECT role, left(content,60), token_count FROM messages ORDER BY created_at DESC LIMIT 10;"
+
+STEP 5 — Experiment: store + view long-term memory
+  curl -X POST http://localhost:7860/api/users/user_demo_1/memory \
+    -H "Content-Type: application/json" \
+    -d '{"content":"User prefers Python examples","memory_type":"preference","importance":0.8}'
+
+  curl http://localhost:7860/api/users/user_demo_1/memory
+
+STEP 6 — Experiment: fine-tuning (simulated — no cost)
+  cd /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/langgraph-agent
+  source venv/bin/activate
+  python -m app.fine_tuning.dataset_builder
+  python -m app.fine_tuning.pipeline
+  python -m app.fine_tuning.evaluation
+
+STEP 7 — HTML guide tabs (what to click / try)
+  Architecture     → read system diagram
+  Langfuse         → hierarchy definitions
+  Traces           → click ▶ to expand simulated parent/child spans
+  Metrics          → read debugging scenarios (slow / hallucination / cost / loop)
+  Conversation     → switch User 1/2/3, then click "Animate Flow"
+  Context Window   → click Normal / 100 Messages / Overflow / After Optimization
+  Fine-Tuning      → pipeline visual + sample JSONL
+  Model Evaluation → base vs fine-tuned metrics table
+  Complete Request Flow → click "Animate Full Flow"
+
+──────────────────────────────────────────────────────────────────────────────
+STOP / CLEANUP
+──────────────────────────────────────────────────────────────────────────────
+
+# Stop LangGraph uvicorn: Ctrl+C in that terminal
+
+# Stop Langfuse only:
+cd /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/langgraph-agent
+docker compose -f docker-compose.langfuse.yml down
+
+# Stop enterprise infra (careful — stops Postgres/Qdrant too):
+cd /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant
+docker-compose -f docker-compose.dev.yml down
+
+──────────────────────────────────────────────────────────────────────────────
+PORT MAP (so you don't mix UIs)
+──────────────────────────────────────────────────────────────────────────────
+4200  Angular enterprise chat UI
+8000  Enterprise FastAPI
+7860  LangGraph agent UI + API   ← use this for Langfuse/memory experiments
+3000  Langfuse dashboard         ← traces live here after each chat
+5433  PostgreSQL (shared)
+6333  Qdrant
+
+
+Keep your existing Terminal 0–3. Add **two more** for Langfuse + LangGraph. Full copy is also in `docs/Commands/commands.txt` at the bottom.
+
+---
+
+### Keep running (as you already do)
+
+```bash
+# Terminal 0 — infra
+cd /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant
+docker-compose -f docker-compose.dev.yml up -d
+docker-compose -f docker-compose.dev.yml ps
+
+# Terminal 1 — API :8000
+cd .../backend && source venv/bin/activate
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+# Terminal 2 — Celery
+# (same as you have)
+
+# Terminal 3 — Angular :4200
+cd .../frontend && npm start
+```
+
+---
+
+### One-time setup (new)
+
+```bash
+# Install deps
+cd /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/langgraph-agent
+source venv/bin/activate
+pip install "langfuse>=2.0,<3" psycopg2-binary pgvector
+
+# Start Langfuse (Terminal 4)
+docker compose -f docker-compose.langfuse.yml up -d
+# Open http://localhost:3000 → Sign up → Create project → API Keys
+# Paste into langgraph-agent/.env:
+#   LANGFUSE_PUBLIC_KEY=pk-lf-...
+#   LANGFUSE_SECRET_KEY=sk-lf-...
+
+# Apply memory schema (uses same Postgres on 5433)
+PGPASSWORD=dev_password psql -h localhost -p 5433 -U ai_user -d ai_assistant \
+  -f app/database/schema.sql
+```
+
+---
+
+### Every day — LangGraph (Terminal 5)
+
+```bash
+cd /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/langgraph-agent
+source venv/bin/activate
+uvicorn app.main:app --host 0.0.0.0 --port 7860 --reload
+```
+
+| What | URL |
+|------|-----|
+| LangGraph chat UI | http://localhost:7860 |
+| Langfuse traces | http://localhost:3000 |
+| HTML learning lab | open the HTML file below |
+
+```bash
+xdg-open /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/docs/hands-on/05-observability-memory-finetuning.html
+```
+
+---
+
+### How to experiment (like LangGraph)
+
+**HTML** = learning lab (click tabs, expand fake traces, switch users, animate flow).  
+**Real experiment** = chat on `:7860` → see traces on `:3000` → check DB.
+
+1. **Traces:** Ask in LangGraph UI → Langfuse → Traces → expand nodes.  
+2. **Multi-user:**  
+   `curl` with `"user_id":"user_demo_1"` then `"user_demo_2"` → list  
+   `http://localhost:7860/api/users/user_demo_1/conversations`  
+3. **Memory:**  
+   `POST /api/users/user_demo_1/memory` then `GET` same path.  
+4. **Fine-tuning (no cost):**  
+   `python -m app.fine_tuning.pipeline` and `python -m app.fine_tuning.evaluation`  
+5. **HTML tabs:** Traces (expand ▶), Conversation (User 1/2/3 + Animate Flow), Context Window (Normal/Overflow), Complete Request Flow (Animate).
+
+**Important:** Langfuse keys in `.env` still say `REPLACE_WITH_YOUR_KEY` until you paste real keys from http://localhost:3000 — without that, chat still works but no traces appear.
+
+### 1. Fix Docker command
+
+Your machine has **`docker-compose`** (hyphen), not `docker compose` (space). Same as your `docker-compose.dev.yml` command:
+
+```bash
+cd ~/Documents/Carrers/AI_Project/enterprise-ai-assistant/langgraph-agent
+docker-compose -f docker-compose.langfuse.yml up -d
+docker-compose -f docker-compose.langfuse.yml ps
+```
+
+Wait ~30–60s, then open **http://localhost:3000**
+
+---
+
+### 2. Keys — order & hands-on (schema does NOT need keys)
+
+| Order | What | Needs Langfuse keys? |
+|------|------|----------------------|
+| 1 | Start Langfuse containers | No |
+| 2 | Sign up + create API keys → paste into `.env` | This **is** the key step |
+| 3 | Apply `schema.sql` to Postgres | **No** — schema is only DB tables |
+| 4 | Start uvicorn on 7860 | Yes (for traces to appear) |
+
+**Hands-on get keys:**
+
+1. Open http://localhost:3000  
+2. Sign up (email/password — local only, no real email)  
+3. Create org + project (e.g. `langgraph-agent`)  
+4. Go to **Settings → API Keys → Create API keys**  
+5. Copy **Public key** (`pk-lf-...`) and **Secret key** (`sk-lf-...`)
+
+**Where to paste** — edit this file:
+
+`/home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/langgraph-agent/.env`
+
+Change lines 33–34 from:
+
+```env
+LANGFUSE_PUBLIC_KEY=pk-lf-REPLACE_WITH_YOUR_KEY
+LANGFUSE_SECRET_KEY=sk-lf-REPLACE_WITH_YOUR_KEY
+```
+
+to your real keys, e.g.:
+
+```env
+LANGFUSE_PUBLIC_KEY=pk-lf-abc123...
+LANGFUSE_SECRET_KEY=sk-lf-xyz789...
+LANGFUSE_HOST=http://localhost:3000
+LANGFUSE_ENABLED=true
+```
+
+Save → restart uvicorn so it picks up `.env`.
+
+Then schema (still no keys needed):
+
+```bash
+cd ~/Documents/Carrers/AI_Project/enterprise-ai-assistant/langgraph-agent
+PGPASSWORD=dev_password psql -h localhost -p 5433 -U ai_user -d ai_assistant \
+  -f app/database/schema.sql
+```
+
+---
+
+### 3. Where is the HTML learning lab?
+
+File path:
+
+```
+/home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/docs/hands-on/05-observability-memory-finetuning.html
+```
+
+Open it:
+
+```bash
+xdg-open /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/docs/hands-on/05-observability-memory-finetuning.html
+```
+
+Or in the IDE: right-click that file → **Open with Live Server / browser**, or drag it into Chrome/Firefox.
+
+That page is **offline demos** (tabs, animations). Real traces live at http://localhost:3000 after you chat on http://localhost:7860.
+
+---
+
+### 4. Fine-tuning — you can run it (simulated), not only read code
+
+No separate UI. Run these in the langgraph-agent venv (prints dataset / pipeline / metrics in the terminal):
+
+```bash
+cd ~/Documents/Carrers/AI_Project/enterprise-ai-assistant/langgraph-agent
+source venv/bin/activate
+python -m app.fine_tuning.dataset_builder
+python -m app.fine_tuning.pipeline
+python -m app.fine_tuning.evaluation
+```
+
+`USE_SIMULATION=True` → no OpenAI fine-tune cost. Also open the HTML tabs **Fine-Tuning** and **Model Evaluation** to see the same flow visually.
+
+---
+
+### Do this sequence now
+
+```bash
+# A) Start Langfuse
+cd ~/Documents/Carrers/AI_Project/enterprise-ai-assistant/langgraph-agent
+docker-compose -f docker-compose.langfuse.yml up -d
+
+# B) Browser: http://localhost:3000 → signup → API keys → paste into .env
+
+# C) Schema (dev-postgres must be up)
+PGPASSWORD=dev_password psql -h localhost -p 5433 -U ai_user -d ai_assistant \
+  -f app/database/schema.sql
+
+# D) Start app
+source venv/bin/activate
+uvicorn app.main:app --host 0.0.0.0 --port 7860 --reload
+
+# E) Open HTML lab
+xdg-open ../docs/hands-on/05-observability-memory-finetuning.html
+```
+
+Langfuse is up. The MinIO error was your network blocking `minio/minio:latest` — fixed by pinning to the tag you already have locally.
+
+**Status now:** http://localhost:3000 is healthy (`health_http=200`).
+
+---
+
+### What you do next (keys)
+
+1. Open **http://localhost:3000**
+2. **Sign up** (any email/password — local only)
+3. Create org + project (e.g. `langgraph-agent`)
+4. **Settings → API Keys → Create** → copy Public + Secret
+5. Edit `langgraph-agent/.env` lines 33–34:
+
+```env
+LANGFUSE_PUBLIC_KEY=pk-lf-........   # paste yours
+LANGFUSE_SECRET_KEY=sk-lf-........   # paste yours
+```
+
+6. Then schema + app:
+
+```bash
+cd ~/Documents/Carrers/AI_Project/enterprise-ai-assistant/langgraph-agent
+
+PGPASSWORD=dev_password psql -h localhost -p 5433 -U ai_user -d ai_assistant \
+  -f app/database/schema.sql
+
+source venv/bin/activate
+uvicorn app.main:app --host 0.0.0.0 --port 7860 --reload
+```
+
+If you ever need to restart Langfuse again:
+
+```bash
+docker-compose -f docker-compose.langfuse.yml up -d
+```
+
+🎉 **All 11 todos are now COMPLETED.** The Production Engineering Masterplan is fully implemented. Here's a summary of everything done in this session:
+
+---
+
+## ✅ Production Engineering Masterplan — Complete
+
+### What was completed this session:
+
+| # | Section | Key Deliverable |
+|---|---------|----------------|
+| 10 | **Guardrails** | Integrated `validate_query()` into `query_validator_node` — blocks injections **before** LLM call (no token cost) |
+| 11 | **Checkpointer** | Swapped `MemorySaver` → `PostgresSaver` in `workflow.py` — graceful fallback + detailed comments explaining WHY |
+| 12 | **Deploy Strategies** | 4 fully-commented scripts: `blue-green-deploy.sh`, `canary-deploy.sh`, `rollback.sh`, `verify-deployment.sh` |
+| 14 | **Security** | `k8s/network-policy.yaml` — 9 policies implementing zero-trust (default-deny-all + explicit whitelists for each service pair) |
+| 16 | **HTML Guide** | `docs/hands-on/06-production-engineering.html` — 16 tabs, 20 checkable exercises with progress bar + localStorage persistence |
+
+### Complete file list from the full masterplan:
+
+**Testing:** `backend/tests/` (47 tests) · `langgraph-agent/tests/` · `scripts/load-test-k6.js`  
+**Auth:** `backend/app/core/auth.py` · `backend/app/api/auth.py`  
+**Docker:** `langgraph-agent/Dockerfile` (multi-stage, non-root UID 1000)  
+**K8s+Helm:** `k8s/langgraph-agent/` · `helm/ai-assistant/`  
+**Monitoring:** `monitoring/` (Prometheus, Grafana 10-panel dashboard, Alertmanager, 6 alert rules)  
+**CI/CD:** `.github/workflows/ci.yml` · `cd.yml` · `security.yml` · `Makefile`  
+**Guardrails:** `backend/app/core/guardrails.py` · `langgraph-agent/app/core/guardrails.py` + node integration  
+**Checkpointer:** `langgraph-agent/app/graph/workflow.py` (PostgresSaver with fallback)  
+**Deploy scripts:** `scripts/blue-green-deploy.sh` · `canary-deploy.sh` · `rollback.sh` · `verify-deployment.sh`  
+**Network Policy:** `k8s/network-policy.yaml` (9 policies, zero-trust)  
+**Guide:** `docs/hands-on/06-production-engineering.html`
+
+### Open the guide:
+```bash
+xdg-open docs/hands-on/06-production-engineering.html
+```
+
+All 13 tabs, 20 steps, copy buttons, progress bar, localStorage persistence — all verified. Here's what was built:
+
+---
+
+## ✅ `06-production-engineering.html` — Completely Rewritten (72 KB, 1774 lines)
+
+Open it with:
+```bash
+xdg-open /home/manish/Documents/Carrers/AI_Project/enterprise-ai-assistant/docs/hands-on/06-production-engineering.html
+```
+
+---
+
+### 13 Tabs — What's in Each
+
+| Tab | Content |
+|-----|---------|
+| 🚀 **Start Here** | Project layout, directory map, 6-terminal setup, one-time `.env` setup |
+| 📁 **Full Stack Startup** | All 7 steps (A→G) with exact directories: infra, schema, backend, celery, langgraph, frontend, langfuse |
+| 🧪 **Run Tests** | pytest commands for backend + langgraph, per-file/function targeting, coverage HTML |
+| 🐙 **GitHub Setup** | Create repo, `.gitignore`, `git init → push`, Personal Access Token auth, daily workflow |
+| ⚙️ **CI/CD Pipeline** | Workflow files explained, trigger CI, watch on GitHub Actions, deliberate failure demo |
+| ☸️ **Kubernetes + Dashboard** | minikube install, Dashboard deploy, **token login steps**, `kubectl apply`, Helm deploy |
+| 📊 **Grafana + Prometheus** | Start monitoring stack, Prometheus targets, PromQL queries, Grafana login + dashboard tour, Alertmanager silence |
+| 🔐 **Auth + Guardrails** | Full JWT flow with `curl`, token save, injection attack tests |
+| 🔒 **Security Scan** | Bandit, pip-audit, Trivy — install + run commands |
+| 🚢 **Deploy Strategies** | Blue/green, canary, emergency rollback, rolling update |
+| ⚡ **Load Testing** | k6 install, run, interpret output, watch Grafana live |
+| 🌐 **All URLs** | Every service URL in one table with credentials |
+| 🎯 **20-Step Exercise** | Complete walkthrough from Step 1 (docker up) → Step 20 (final verification) with checkboxes, progress bar, `localStorage` persistence |
+
+### Key features:
+- **Every command has a green directory label** showing exactly where to run it
+- **Copy button** on every code block
+- **Progress bar** on the 20-step exercise saves progress across browser refreshes
+- **Clickable URLs** open in new tab
+`pytest` is now installed in the backend venv. Run:
+
+```bash
+cd ~/Documents/Carrers/AI_Project/enterprise-ai-assistant/backend
+source venv/bin/activate
+pytest tests/ -v
+```
+
+If you ever see `Command 'pytest' not found` again, the venv isn’t active or deps aren’t installed — use:
+
+```bash
+source venv/bin/activate
+pip install pytest pytest-asyncio httpx pytest-cov
+```

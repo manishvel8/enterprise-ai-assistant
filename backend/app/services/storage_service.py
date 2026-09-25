@@ -22,12 +22,18 @@ Why use MinIO locally instead of S3?
 
 import io
 import logging
+from pathlib import Path
 from typing import Optional
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 _minio_client = None
+_minio_init_attempted = False
+
+# Real on-disk fallback when MinIO client/package is unavailable.
+# Path layout: backend/.local_uploads/{document_id}/original.ext
+_LOCAL_UPLOAD_ROOT = Path(__file__).resolve().parents[2] / ".local_uploads"
 
 
 def get_minio_client():
@@ -35,28 +41,35 @@ def get_minio_client():
     Get or create the MinIO client.
 
     Returns None if MinIO is not configured or not reachable.
-    The upload functions fall back to local disk if MinIO is unavailable.
+    Upload/download then use a real local-disk fallback.
     """
-    global _minio_client
+    global _minio_client, _minio_init_attempted
     if _minio_client is not None:
         return _minio_client
+    if _minio_init_attempted and _minio_client is None:
+        return None
+    _minio_init_attempted = True
 
     try:
         from minio import Minio
-        _minio_client = Minio(
+        client = Minio(
             endpoint=settings.minio_endpoint,
             access_key=settings.minio_access_key,
             secret_key=settings.minio_secret_key,
             secure=settings.minio_use_ssl,
         )
-        _ensure_bucket_exists(_minio_client)
+        _ensure_bucket_exists(client)
+        _minio_client = client
         logger.info(f"MinIO client initialized: {settings.minio_endpoint}")
         return _minio_client
     except ImportError:
-        logger.warning("minio package not installed. File storage disabled.")
+        logger.error(
+            "minio package not installed. Run: pip install minio. "
+            "Using local disk fallback under backend/.local_uploads/"
+        )
         return None
     except Exception as e:
-        logger.warning(f"MinIO not available: {e}. File storage disabled.")
+        logger.warning(f"MinIO not available: {e}. Using local disk fallback.")
         return None
 
 
@@ -69,69 +82,100 @@ def _ensure_bucket_exists(client) -> None:
             logger.info(f"Created MinIO bucket: {bucket}")
     except Exception as e:
         logger.error(f"Failed to ensure bucket exists: {e}")
+        raise
+
+
+def _local_object_path(document_id: str, file_name: str) -> Path:
+    ext = ""
+    if "." in file_name:
+        ext = "." + file_name.rsplit(".", 1)[-1].lower()
+    return _LOCAL_UPLOAD_ROOT / document_id / f"original{ext}"
+
+
+def _upload_local(document_id: str, file_bytes: bytes, file_name: str) -> str:
+    """Write bytes to disk and return a local:// storage path the worker can read."""
+    path = _local_object_path(document_id, file_name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(file_bytes)
+    storage_path = f"local://{document_id}/{path.name}"
+    logger.warning(
+        f"Stored file on local disk (MinIO unavailable): {path} ({len(file_bytes)} bytes)"
+    )
+    return storage_path
+
+
+def _download_local(storage_path: str) -> Optional[bytes]:
+    """Read bytes from local://{document_id}/original.ext fallback storage."""
+    # local://{document_id}/{filename}
+    without_scheme = storage_path[len("local://") :]
+    parts = without_scheme.split("/", 1)
+    if len(parts) != 2:
+        logger.error(f"Invalid local:// path: {storage_path}")
+        return None
+    document_id, file_name = parts
+    path = _LOCAL_UPLOAD_ROOT / document_id / file_name
+    if not path.is_file():
+        # Also try original.* if legacy path used display name
+        candidates = list((_LOCAL_UPLOAD_ROOT / document_id).glob("original.*")) if (
+            _LOCAL_UPLOAD_ROOT / document_id
+        ).is_dir() else []
+        if candidates:
+            path = candidates[0]
+        else:
+            logger.error(f"Local file missing: {path}")
+            return None
+    data = path.read_bytes()
+    logger.info(f"Loaded local file {path} ({len(data)} bytes)")
+    return data
 
 
 def upload_file(document_id: str, file_bytes: bytes, file_name: str, content_type: str = "application/octet-stream") -> Optional[str]:
     """
     Upload a file to MinIO object storage.
 
-    Args:
-        document_id: Unique ID — used as part of the storage key
-        file_bytes: Raw file content
-        file_name: Original filename (for content-type detection)
-        content_type: MIME type of the file
+    Object key uses a sanitized name (document_id + extension) so spaces,
+    apostrophes, and unicode in original filenames never break downloads.
+    The original display name is kept only in Postgres metadata.
 
-    Returns:
-        Storage path (e.g., "documents/doc_abc123/report.pdf")
-        or None if upload failed.
-
-    Why use document_id as prefix?
-        - All files for one document are grouped in one "folder"
-        - Easy to delete all files for a document in one operation
-        - Avoids filename collisions (two users uploading "report.pdf")
+    Falls back to real local disk under backend/.local_uploads/ if MinIO is down.
     """
+    # Stable object key: documents/{doc_id}/original.ext
+    ext = ""
+    if "." in file_name:
+        ext = "." + file_name.rsplit(".", 1)[-1].lower()
+    object_name = f"documents/{document_id}/original{ext}"
+
     client = get_minio_client()
     if not client:
-        logger.warning(f"MinIO not available. File '{file_name}' not stored.")
-        return f"local://{document_id}/{file_name}"  # fake path for development
-
-    storage_path = f"documents/{document_id}/{file_name}"
+        return _upload_local(document_id, file_bytes, file_name)
 
     try:
         client.put_object(
             bucket_name=settings.minio_bucket_name,
-            object_name=storage_path,
+            object_name=object_name,
             data=io.BytesIO(file_bytes),
             length=len(file_bytes),
             content_type=content_type,
         )
-        logger.info(f"Uploaded file to MinIO: {storage_path} ({len(file_bytes)} bytes)")
-        return storage_path
+        logger.info(f"Uploaded file to MinIO: {object_name} ({len(file_bytes)} bytes)")
+        return object_name
     except Exception as e:
-        logger.error(f"MinIO upload failed: {e}")
-        return None
+        logger.error(f"MinIO upload failed: {e}. Falling back to local disk.")
+        return _upload_local(document_id, file_bytes, file_name)
 
 
 def download_file(storage_path: str) -> Optional[bytes]:
     """
-    Download a file from MinIO object storage.
+    Download a file from MinIO object storage (or local:// disk fallback).
 
     Called by the Celery worker to get the raw file bytes for processing.
-
-    Args:
-        storage_path: The path returned by upload_file()
-
-    Returns:
-        File bytes, or None if download failed.
     """
     if storage_path.startswith("local://"):
-        # Development fallback — file wasn't actually stored
-        logger.warning(f"Cannot download local:// path: {storage_path}")
-        return None
+        return _download_local(storage_path)
 
     client = get_minio_client()
     if not client:
-        logger.warning("MinIO not available. Cannot download file.")
+        logger.warning("MinIO not available. Cannot download MinIO object.")
         return None
 
     try:
@@ -142,19 +186,26 @@ def download_file(storage_path: str) -> Optional[bytes]:
         logger.info(f"Downloaded file from MinIO: {storage_path} ({len(data)} bytes)")
         return data
     except Exception as e:
-        logger.error(f"MinIO download failed: {e}")
+        logger.error(f"MinIO download failed for '{storage_path}': {e}")
         return None
 
 
 def delete_file(storage_path: str) -> bool:
     """
-    Delete a file from MinIO.
-
-    Called when a document is deleted from the system.
+    Delete a file from MinIO (or local disk fallback).
 
     Returns True if deletion succeeded, False otherwise.
     """
     if storage_path.startswith("local://"):
+        without_scheme = storage_path[len("local://") :]
+        parts = without_scheme.split("/", 1)
+        if len(parts) == 2:
+            path = _LOCAL_UPLOAD_ROOT / parts[0] / parts[1]
+            if path.is_file():
+                path.unlink()
+            parent = path.parent
+            if parent.is_dir() and not any(parent.iterdir()):
+                parent.rmdir()
         return True
 
     client = get_minio_client()
@@ -176,13 +227,6 @@ def get_presigned_url(storage_path: str, expires_seconds: int = 3600) -> Optiona
 
     Used by the frontend to let users download their original uploaded files
     without routing through the API server (saves bandwidth).
-
-    Args:
-        storage_path: MinIO object path
-        expires_seconds: How long the URL is valid (default: 1 hour)
-
-    Returns:
-        Pre-signed URL string, or None if generation failed.
     """
     if storage_path.startswith("local://"):
         return None

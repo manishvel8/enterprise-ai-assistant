@@ -1,0 +1,24 @@
+---
+# postgres/service.yaml — Headless Service for PostgreSQL StatefulSet.
+#
+# clusterIP: None makes this a "headless" service.
+# With a headless service, each pod gets a DNS name:
+#   postgres-0.postgres-service.ai-assistant.svc.cluster.local
+#
+# This is required for StatefulSets so pods can find each other
+# and clients can connect to a specific replica.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+  namespace: ai-assistant
+  labels:
+    app: postgres
+spec:
+  type: ClusterIP
+  clusterIP: None   # Headless — required for StatefulSet
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432

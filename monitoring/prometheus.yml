@@ -1,0 +1,116 @@
+# monitoring/prometheus.yml — Prometheus scrape configuration.
+#
+# WHAT IS PROMETHEUS?
+#   Prometheus is an open-source monitoring system. It:
+#   1. Scrapes metrics from applications at regular intervals
+#   2. Stores them in a time-series database (TSDB)
+#   3. Exposes a query language (PromQL) to query metrics
+#   4. Integrates with Grafana for dashboards and Alertmanager for alerts
+#
+# HOW METRICS WORK:
+#   Your FastAPI app exposes a /metrics endpoint (added by prometheus-fastapi-instrumentator).
+#   Prometheus reads that endpoint every 15 seconds:
+#     http_requests_total{method="POST", path="/api/chat", status_code="200"} 1234
+#     http_request_duration_seconds_bucket{le="0.1"} 500
+#     python_info{version="3.11"} 1
+#
+# PROMQL EXAMPLES (used in Grafana dashboards):
+#   Request rate:      rate(http_requests_total[5m])
+#   Error rate:        rate(http_requests_total{status_code=~"5.."}[5m])
+#   P95 latency:       histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))
+#   Active goroutines: go_goroutines
+#
+# RUN:
+#   cd enterprise-ai-assistant
+#   docker-compose -f monitoring/docker-compose.monitoring.yml up -d
+#   Open Prometheus: http://localhost:9090
+#   Open Grafana:    http://localhost:3001 (admin/admin)
+
+global:
+  # How often to scrape metrics (default: 1 minute, we use 15s for responsiveness)
+  scrape_interval: 15s
+
+  # How often to evaluate alerting rules
+  evaluation_interval: 15s
+
+  # External labels are attached to all metrics when sending to remote storage
+  external_labels:
+    environment: local
+    app: enterprise-ai-assistant
+
+# ── Alerting config ───────────────────────────────────────────────────────────
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093    # Alertmanager container name
+
+# ── Alert rules (loaded from separate files) ──────────────────────────────────
+rule_files:
+  - /etc/prometheus/alerts/*.yml
+
+# ── Scrape jobs ───────────────────────────────────────────────────────────────
+# Each job tells Prometheus which endpoints to scrape for metrics.
+scrape_configs:
+
+  # ── Prometheus self-monitoring ────────────────────────────────────────────
+  # Prometheus monitors itself. Useful for debugging Prometheus issues.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # ── FastAPI Backend ───────────────────────────────────────────────────────
+  # prometheus-fastapi-instrumentator adds /metrics to the FastAPI app.
+  # Metrics include: http_requests_total, http_request_duration_seconds
+  - job_name: backend
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8000"]   # host.docker.internal = localhost from Docker
+        labels:
+          service: backend
+          component: api
+
+  # ── LangGraph Agent ───────────────────────────────────────────────────────
+  - job_name: langgraph-agent
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:7860"]
+        labels:
+          service: langgraph-agent
+          component: graph
+
+  # ── Node Exporter (system metrics) ───────────────────────────────────────
+  # node_exporter exposes OS-level metrics:
+  # - CPU usage: node_cpu_seconds_total
+  # - Memory: node_memory_MemAvailable_bytes
+  # - Disk: node_disk_io_time_seconds_total
+  # - Network: node_network_receive_bytes_total
+  - job_name: node-exporter
+    static_configs:
+      - targets: ["node-exporter:9100"]
+        labels:
+          service: infrastructure
+
+  # ── Redis Exporter ────────────────────────────────────────────────────────
+  # Exposes Redis metrics:
+  # - redis_connected_clients
+  # - redis_memory_used_bytes
+  # - redis_commands_processed_total
+  # - redis_keyspace_hits_total / redis_keyspace_misses_total
+  - job_name: redis-exporter
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+        labels:
+          service: redis
+
+  # ── Postgres Exporter ─────────────────────────────────────────────────────
+  # Exposes PostgreSQL metrics:
+  # - pg_stat_user_tables_n_tup_ins (inserts/sec)
+  # - pg_stat_database_tup_fetched (queries/sec)
+  # - pg_locks_count (lock contention)
+  # - pg_database_size_bytes (DB size growth)
+  - job_name: postgres-exporter
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+        labels:
+          service: postgres

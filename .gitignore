@@ -1,59 +1,27 @@
-# =============================================================================
-# Enterprise AI Chat Assistant — .gitignore
-# =============================================================================
-
-# Environment secrets — NEVER commit these
-.env
-*.env.local
-*.env.production
-
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-dist/
-*.egg-info/
-.eggs/
+*.pyc
+*.pyo
 venv/
-env/
-.venv/
-pip-log.txt
-.pytest_cache/
-.coverage
-htmlcov/
-*.log
+backend/venv/
+langgraph-agent/venv/
 
-# Node / Angular
-node_modules/
+# Secrets — NEVER commit these
+.env
+*.env.local
+backend/.env
+langgraph-agent/.env
+
+# Node
+frontend/node_modules/
 frontend/dist/
 frontend/.angular/
-*.js.map
-npm-debug.log*
-yarn-debug.log*
 
-# Docker
-*.tar
+# Data
+langgraph-agent/data/
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-.DS_Store
-
-# Kubernetes secrets (generated)
-k8s/secret-generated.yaml
-
-# Uploaded documents (local dev)
-uploads/
-tmp/
-
-# Test coverage
-coverage/
-
-# Celery
-celerybeat-schedule
-celerybeat.pid
+# Coverage
+htmlcov/
+.coverage
+coverage.xml
+*.egg-info/

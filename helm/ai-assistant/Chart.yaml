@@ -1,0 +1,41 @@
+---
+# Chart.yaml — Helm chart metadata.
+#
+# WHAT IS HELM?
+#   Helm is the package manager for Kubernetes.
+#   Without Helm: you apply 20+ YAML files manually, manage versions manually.
+#   With Helm:
+#     helm install my-release ./helm/ai-assistant   (deploys everything)
+#     helm upgrade my-release ./helm/ai-assistant   (updates with changes)
+#     helm rollback my-release 1                    (rolls back to version 1)
+#     helm uninstall my-release                     (removes everything)
+#
+# KEY CONCEPTS:
+#   Chart    = packaged application (this directory)
+#   Release  = deployed instance of a chart (you can have dev/staging/prod releases)
+#   values.yaml = configuration for the chart (customizable per environment)
+#
+# HOW TEMPLATES WORK:
+#   Helm templates are Kubernetes YAML + Go template syntax.
+#   {{ .Values.backend.replicas }} → replaced with the value from values.yaml
+#   This lets one chart deploy to dev (1 replica) and prod (5 replicas).
+
+apiVersion: v2
+name: ai-assistant
+description: "Enterprise AI Assistant — FastAPI + LangGraph + Angular + Multi-DB"
+type: application
+version: "1.0.0"         # Chart version (increment when chart changes)
+appVersion: "1.0.0"      # Application version (matches Docker image tag)
+
+keywords:
+  - ai
+  - rag
+  - langgraph
+  - fastapi
+  - enterprise
+
+maintainers:
+  - name: Manish
+    email: dev@example.com
+
+dependencies: []          # No sub-charts (all services are in our templates/)

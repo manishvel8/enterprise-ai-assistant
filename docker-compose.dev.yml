@@ -50,7 +50,8 @@ services:
     volumes:
       - postgres-data-dev:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      # Host 5433 → container 5432 (avoids conflict with local Postgres on 5432)
+      - "5433:5432"
     networks:
       - ai-network-dev
     healthcheck:

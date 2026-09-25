@@ -1,0 +1,1780 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM Observability, Memory & Fine-Tuning — Complete Developer Lab</title>
+<style>
+:root {
+  --bg: #0d1117; --surface: #161b22; --surface2: #21262d; --border: #30363d;
+  --accent: #58a6ff; --accent2: #3fb950; --accent3: #d2a679; --warn: #f0883e;
+  --err: #f85149; --purple: #bc8cff; --text: #c9d1d9; --muted: #8b949e;
+  --green: #3fb950; --yellow: #d29922; --blue: #58a6ff;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
+h1,h2,h3,h4 { color: #f0f6fc; font-weight: 600; }
+a { color: var(--accent); text-decoration: none; }
+code, pre { font-family: 'Consolas', 'Monaco', monospace; }
+
+/* ── Top nav ─────────────────────────────────────────────────── */
+.top-bar {
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  padding: 12px 24px; display: flex; align-items: center; gap: 16px;
+  position: sticky; top: 0; z-index: 100;
+}
+.top-bar h1 { font-size: 16px; color: var(--accent); }
+.badge { background: var(--surface2); border: 1px solid var(--border); border-radius: 12px; padding: 2px 10px; font-size: 11px; color: var(--muted); }
+
+/* ── Tab navigation ──────────────────────────────────────────── */
+.tabs { display: flex; overflow-x: auto; background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 16px; gap: 2px; }
+.tab-btn { background: none; border: none; color: var(--muted); cursor: pointer; padding: 12px 16px; font-size: 13px; white-space: nowrap; border-bottom: 2px solid transparent; transition: all .2s; }
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* ── Content panels ──────────────────────────────────────────── */
+.tab-panel { display: none; padding: 24px; max-width: 1200px; margin: 0 auto; }
+.tab-panel.active { display: block; }
+
+/* ── Section cards ───────────────────────────────────────────── */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+.card-title { font-size: 16px; color: #f0f6fc; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+
+/* ── Code blocks ─────────────────────────────────────────────── */
+pre { background: #010409; border: 1px solid var(--border); border-radius: 6px; padding: 16px; overflow-x: auto; margin: 12px 0; font-size: 12.5px; line-height: 1.6; }
+.kw { color: #ff7b72; } .str { color: #a5d6ff; } .com { color: #8b949e; font-style: italic; }
+.fn { color: #d2a679; } .num { color: #79c0ff; } .cls { color: #7ee787; }
+
+/* ── Grid layouts ────────────────────────────────────────────── */
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+@media(max-width:768px) { .grid2,.grid3 { grid-template-columns: 1fr; } }
+
+/* ── Trace tree ──────────────────────────────────────────────── */
+.trace-node { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; margin: 4px 0; overflow: hidden; }
+.trace-header { display: flex; align-items: center; gap: 8px; padding: 10px 14px; cursor: pointer; transition: background .15s; user-select: none; }
+.trace-header:hover { background: var(--surface2); }
+.trace-header .arrow { transition: transform .2s; font-size: 10px; }
+.trace-header.open .arrow { transform: rotate(90deg); }
+.trace-children { display: none; padding: 4px 0 4px 28px; border-top: 1px solid var(--border); }
+.trace-children.open { display: block; }
+.trace-badge { padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; }
+.tb-span { background: #1f3c5c; color: #58a6ff; }
+.tb-gen { background: #1f3c2a; color: #3fb950; }
+.tb-event { background: #3c2a1f; color: #d2a679; }
+.tb-trace { background: #3c1f3c; color: #bc8cff; }
+.trace-time { margin-left: auto; color: var(--muted); font-size: 11px; }
+.trace-meta { padding: 10px 14px; font-size: 12px; color: var(--muted); background: #010409; border-top: 1px solid var(--border); }
+.trace-meta .meta-grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; }
+
+/* ── Metrics ─────────────────────────────────────────────────── */
+.metric-box { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; text-align: center; }
+.metric-value { font-size: 28px; font-weight: 700; color: var(--accent); }
+.metric-label { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.metric-delta { font-size: 11px; margin-top: 4px; }
+.delta-up { color: var(--err); } .delta-dn { color: var(--green); }
+
+/* ── Context window visualizer ───────────────────────────────── */
+.ctx-bar { height: 36px; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 11px; font-weight: 600; transition: width .3s; white-space: nowrap; overflow: hidden; }
+.ctx-track { background: var(--surface2); border-radius: 6px; overflow: hidden; display: flex; height: 36px; border: 1px solid var(--border); }
+
+/* ── Buttons ─────────────────────────────────────────────────── */
+.btn { background: var(--accent); color: #000; border: none; border-radius: 6px; padding: 8px 16px; cursor: pointer; font-size: 13px; font-weight: 600; transition: opacity .2s; }
+.btn:hover { opacity: 0.85; }
+.btn-sm { padding: 5px 10px; font-size: 11px; }
+.btn-green { background: var(--green); }
+.btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+
+/* ── Conversation simulator ──────────────────────────────────── */
+.user-tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+.user-tab { padding: 8px 16px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 12px; background: var(--surface2); }
+.user-tab.active { border-color: var(--accent); color: var(--accent); background: #1f3c5c33; }
+.chat-window { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; height: 280px; overflow-y: auto; padding: 12px; }
+.msg { padding: 8px 12px; border-radius: 8px; margin-bottom: 8px; max-width: 85%; font-size: 13px; }
+.msg-user { background: #1f3c5c; color: #c9d1d9; margin-left: auto; text-align: right; }
+.msg-ai { background: var(--surface); color: #c9d1d9; border: 1px solid var(--border); }
+.msg-sys { background: #1f3c2a; color: #7ee787; font-size: 11px; text-align: center; max-width: 100%; }
+.msg-label { font-size: 10px; color: var(--muted); margin-bottom: 2px; }
+
+/* ── Info pills ──────────────────────────────────────────────── */
+.info-pill { display: inline-block; padding: 3px 10px; border-radius: 10px; font-size: 11px; margin: 2px; }
+.pill-blue { background: #1f3c5c; color: #58a6ff; }
+.pill-green { background: #1f3c2a; color: #3fb950; }
+.pill-yellow { background: #3c2a1f; color: #d29922; }
+.pill-purple { background: #2a1f3c; color: #bc8cff; }
+
+/* ── Flow diagram ────────────────────────────────────────────── */
+.flow { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; padding: 12px 0; }
+.flow-step { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 14px; font-size: 12px; }
+.flow-active { background: #1f3c5c; border-color: var(--accent); color: var(--accent); }
+.flow-done { background: #1f3c2a; border-color: var(--green); color: var(--green); }
+.flow-arrow { color: var(--muted); font-size: 16px; }
+
+/* ── Comparison table ────────────────────────────────────────── */
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { background: var(--surface2); color: var(--muted); padding: 8px 12px; text-align: left; border: 1px solid var(--border); font-size: 11px; text-transform: uppercase; }
+td { padding: 8px 12px; border: 1px solid var(--border); }
+.td-green { color: var(--green); font-weight: 600; }
+.td-red { color: var(--err); }
+.td-yellow { color: var(--yellow); }
+
+/* ── Alert boxes ─────────────────────────────────────────────── */
+.alert { padding: 12px 16px; border-radius: 6px; margin: 12px 0; font-size: 13px; }
+.alert-info { background: #1f3c5c33; border: 1px solid #58a6ff44; }
+.alert-warn { background: #3c2a1f33; border: 1px solid #d2967944; }
+.alert-green { background: #1f3c2a33; border: 1px solid #3fb95044; }
+
+/* ── Request flow animation ──────────────────────────────────── */
+.flow-box { border: 1px solid var(--border); border-radius: 6px; padding: 10px 14px; margin: 4px 0; display: flex; align-items: center; gap: 10px; transition: all .3s; }
+.flow-box.highlight { border-color: var(--accent); background: #1f3c5c22; }
+.flow-box.done { border-color: var(--green); background: #1f3c2a22; }
+.flow-number { width: 22px; height: 22px; background: var(--surface2); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--muted); flex-shrink: 0; }
+.flow-box.highlight .flow-number { background: var(--accent); color: #000; }
+.flow-box.done .flow-number { background: var(--green); color: #000; }
+</style>
+</head>
+<body>
+
+<div class="top-bar">
+  <h1>LLM Observability, Memory & Fine-Tuning</h1>
+  <span class="badge">Complete Developer Lab</span>
+  <span class="badge">Langfuse + PostgreSQL + Fine-Tuning</span>
+  <span class="badge" style="margin-left:auto; color:var(--green)">v2.0</span>
+</div>
+
+<!-- ── Tab navigation ──────────────────────────────────────────────────── -->
+<div class="tabs">
+  <button class="tab-btn active" onclick="showTab('architecture')">Architecture</button>
+  <button class="tab-btn" onclick="showTab('langfuse')">Langfuse</button>
+  <button class="tab-btn" onclick="showTab('traces')">Traces</button>
+  <button class="tab-btn" onclick="showTab('metrics')">Metrics</button>
+  <button class="tab-btn" onclick="showTab('rag-obs')">RAG Observability</button>
+  <button class="tab-btn" onclick="showTab('agent-obs')">Agent Observability</button>
+  <button class="tab-btn" onclick="showTab('finetuning')">Fine-Tuning</button>
+  <button class="tab-btn" onclick="showTab('evaluation')">Model Evaluation</button>
+  <button class="tab-btn" onclick="showTab('conversation')">Conversation History</button>
+  <button class="tab-btn" onclick="showTab('sessions')">Sessions</button>
+  <button class="tab-btn" onclick="showTab('context-window')">Context Window</button>
+  <button class="tab-btn" onclick="showTab('memory')">Memory</button>
+  <button class="tab-btn" onclick="showTab('multiuser')">Multi-User Arch</button>
+  <button class="tab-btn" onclick="showTab('database')">Database</button>
+  <button class="tab-btn" onclick="showTab('request-flow')">Complete Request Flow</button>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     TAB 1: ARCHITECTURE
+     ═══════════════════════════════════════════════════════════════════════════ -->
+<div id="tab-architecture" class="tab-panel active">
+  <div class="card">
+    <div class="card-title">🏗️ Complete System Architecture</div>
+    <p style="color:var(--muted); margin-bottom:16px;">Every component in your production LLM application and how they connect.</p>
+    <pre>
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         CLIENT (Browser / API)                              │
+└─────────────────────────┬───────────────────────────────────────────────────┘
+                          │  POST /api/chat  {query, user_id, conversation_id}
+                          ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         FASTAPI APPLICATION (Port 7860)                     │
+│                                                                             │
+│  1. get_or_create_user()       → PostgreSQL  (users table)                  │
+│  2. get_or_create_conversation() → PostgreSQL  (conversations table)        │
+│  3. create_session()           → PostgreSQL  (sessions table)               │
+│  4. save_message(role=user)    → PostgreSQL  (messages table)               │
+│  5. load_recent_messages()     → PostgreSQL  (sliding window)               │
+│  6. retrieve_relevant_memory() → PostgreSQL  (pgvector cosine search)       │
+│  7. build_context_prompt()     → in-memory   (summarize + inject memory)    │
+│  8. create_trace()             → Langfuse    (observability)                │
+│  9. RUN LANGGRAPH ─────────────────────────────────────────────────────┐    │
+│                                                                        │    │
+│     query_validator → router → [rag_retriever │ web_searcher │ hitl]  │    │
+│                                      ↓                                │    │
+│                             response_generator                        │    │
+│                                      ↓                                │    │
+│                              quality_checker ──(REVISE)──┐            │    │
+│                                      │ PASS              │            │    │
+│                                     END                  └────────────┘    │
+│                                                                             │
+│  10. save_message(role=assistant) → PostgreSQL                              │
+│  11. finalize_trace()             → Langfuse                                │
+│  12. flush()                      → Langfuse sends all buffered events      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+DATA STORES:
+┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+│  PostgreSQL  │  │    Qdrant    │  │   Langfuse   │  │    Redis     │
+│  (port 5433) │  │  (port 6333) │  │  (port 3000) │  │  (port 6379) │
+│              │  │              │  │              │  │              │
+│ users        │  │ chunks       │  │ traces       │  │ celery queue │
+│ conversations│  │ embeddings   │  │ spans        │  │ (doc worker) │
+│ sessions     │  │ 1536-d vecs  │  │ generations  │  │              │
+│ messages     │  │              │  │ scores       │  │              │
+│ memory       │  │              │  │ dashboards   │  │              │
+└──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘</pre>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <div class="card-title">📦 New Files Created</div>
+      <pre style="font-size:11px;">langgraph-agent/
+├── docker-compose.langfuse.yml   ← Langfuse self-hosted
+├── app/
+│   ├── observability/
+│   │   └── langfuse_client.py    ← SDK wrapper
+│   ├── database/
+│   │   ├── schema.sql            ← PostgreSQL DDL
+│   │   └── db_client.py          ← connection pool
+│   ├── memory/
+│   │   ├── conversation_manager  ← CRUD
+│   │   ├── context_manager       ← window strategies
+│   │   └── memory_retrieval      ← semantic search
+│   └── fine_tuning/
+│       ├── dataset_builder.py    ← JSONL prep
+│       ├── pipeline.py           ← OpenAI API calls
+│       └── evaluation.py         ← A/B comparison</pre>
+    </div>
+    <div class="card">
+      <div class="card-title">🔧 Files Modified</div>
+      <pre style="font-size:11px;">langgraph-agent/
+├── .env                         ← + Langfuse + DB vars
+├── requirements.txt             ← + langfuse, psycopg2, pgvector
+├── app/config.py                ← + 8 new settings
+├── app/graph/state.py           ← + 6 new fields
+├── app/main.py                  ← full request flow
+├── app/agents/
+│   ├── query_validator.py       ← + span + generation
+│   ├── router.py                ← + span + generation
+│   ├── rag_retriever.py         ← + 3 nested spans
+│   ├── web_searcher.py          ← + span
+│   ├── human_gate.py            ← + 2 events
+│   ├── response_generator.py   ← + span + generation
+│   └── quality_checker.py      ← + span + score
+└── app/services/llm_service.py  ← + chat_with_usage()</pre>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     TAB 2: LANGFUSE
+     ═══════════════════════════════════════════════════════════════════════════ -->
+<div id="tab-langfuse" class="tab-panel">
+  <div class="card">
+    <div class="card-title">🔭 What is Langfuse?</div>
+    <p style="margin-bottom:12px; color:var(--muted);">Open-source LLM observability platform. Like Sentry or Datadog — but built specifically for LLM applications.</p>
+    <div class="grid2">
+      <div>
+        <h4 style="margin-bottom:8px; color:var(--accent);">Without Langfuse</h4>
+        <ul style="color:var(--muted); line-height:2; padding-left:20px; font-size:13px;">
+          <li>Slow response? No idea which node caused it</li>
+          <li>Bad answer? Can't see what context was sent</li>
+          <li>High costs? Don't know which user/query is expensive</li>
+          <li>Agent looping? Can't see the sequence of tool calls</li>
+          <li>Quality degrading? No metric to track over time</li>
+        </ul>
+      </div>
+      <div>
+        <h4 style="margin-bottom:8px; color:var(--green);">With Langfuse</h4>
+        <ul style="color:var(--text); line-height:2; padding-left:20px; font-size:13px;">
+          <li>See <strong>exact latency</strong> per node (RAG: 350ms, LLM: 1.7s)</li>
+          <li>See <strong>exact prompt + context</strong> sent to LLM</li>
+          <li>Track <strong>cost per user/session/day</strong></li>
+          <li>See <strong>full tool call sequence</strong> in trace tree</li>
+          <li>Filter traces by <strong>quality_score &lt; 0.7</strong></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">📐 Langfuse Hierarchy — Definitions</div>
+    <div class="grid2">
+      <div>
+        <div style="margin-bottom:10px;">
+          <span class="info-pill pill-purple">Trace</span>
+          <span style="font-size:12px; color:var(--muted);">Top-level container for ONE user request</span>
+          <p style="font-size:12px; padding:6px 0 0 0; color:var(--text);">Like a folder that holds everything that happened during one request. Attached to user_id, session_id.</p>
+        </div>
+        <div style="margin-bottom:10px;">
+          <span class="info-pill pill-blue">Span</span>
+          <span style="font-size:12px; color:var(--muted);">A unit of work with duration</span>
+          <p style="font-size:12px; padding:6px 0 0 0; color:var(--text);">Any code block with a start + end time. Used for: LangGraph nodes, RAG retrieval, tool calls.</p>
+        </div>
+        <div style="margin-bottom:10px;">
+          <span class="info-pill pill-green">Generation</span>
+          <span style="font-size:12px; color:var(--muted);">An LLM API call</span>
+          <p style="font-size:12px; padding:6px 0 0 0; color:var(--text);">Special span that also tracks: model name, input tokens, output tokens, cost. Auto-cost for GPT models.</p>
+        </div>
+        <div style="margin-bottom:10px;">
+          <span class="info-pill pill-yellow">Event</span>
+          <span style="font-size:12px; color:var(--muted);">Point-in-time occurrence</span>
+          <p style="font-size:12px; padding:6px 0 0 0; color:var(--text);">No duration. Used for: human interruptions, decisions, errors, milestones.</p>
+        </div>
+      </div>
+      <div>
+        <div style="margin-bottom:10px;">
+          <span class="info-pill pill-purple">Session</span>
+          <span style="font-size:12px; color:var(--muted);">Groups related traces</span>
+          <p style="font-size:12px; padding:6px 0 0 0; color:var(--text);">All traces from one browser tab / conversation window. session_id groups them for analysis.</p>
+        </div>
+        <div style="margin-bottom:10px;">
+          <span class="info-pill pill-blue">User</span>
+          <span style="font-size:12px; color:var(--muted);">Groups all user activity</span>
+          <p style="font-size:12px; padding:6px 0 0 0; color:var(--text);">user_id on every trace groups all requests from one person. Enables per-user cost, latency, quality analysis.</p>
+        </div>
+        <div style="margin-bottom:10px;">
+          <span class="info-pill pill-green">Observation</span>
+          <span style="font-size:12px; color:var(--muted);">Generic term</span>
+          <p style="font-size:12px; padding:6px 0 0 0; color:var(--text);">Span, Generation, and Event all inherit from Observation in Langfuse's data model.</p>
+        </div>
+        <div style="margin-bottom:10px;">
+          <span class="info-pill pill-yellow">Score</span>
+          <span style="font-size:12px; color:var(--muted);">A numeric evaluation</span>
+          <p style="font-size:12px; padding:6px 0 0 0; color:var(--text);">Attached to a trace. Example: quality_score=0.92. Filter/sort traces by score in dashboard.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">🚀 Quick Setup — Self-Hosted Docker</div>
+    <pre><span class="com"># Step 1: Start Langfuse with Docker Compose</span>
+cd langgraph-agent
+docker compose -f docker-compose.langfuse.yml up -d
+
+<span class="com"># This starts 6 containers:</span>
+<span class="com">#   langfuse_postgres    — stores users, projects, traces metadata</span>
+<span class="com">#   langfuse_clickhouse  — analytics for token counts, costs</span>
+<span class="com">#   langfuse_redis       — job queue for async event processing</span>
+<span class="com">#   langfuse_minio       — blob storage for media uploads</span>
+<span class="com">#   langfuse_worker      — background event processor</span>
+<span class="com">#   langfuse_server      — web UI at http://localhost:3000</span>
+
+<span class="com"># Step 2: Open browser</span>
+open http://localhost:3000
+
+<span class="com"># Step 3: Sign up → Create Project → Settings → API Keys</span>
+<span class="com"># Step 4: Copy keys to .env</span>
+<span class="kw">LANGFUSE_PUBLIC_KEY</span>=pk-lf-xxxxxxxx
+<span class="kw">LANGFUSE_SECRET_KEY</span>=sk-lf-xxxxxxxx
+<span class="kw">LANGFUSE_HOST</span>=http://localhost:3000
+
+<span class="com"># Step 5: Install SDK</span>
+pip install langfuse>=2.0
+
+<span class="com"># Step 6: Restart FastAPI</span>
+uvicorn app.main:app --host 0.0.0.0 --port 7860 --reload
+
+<span class="com"># Step 7: Send a test request and see it in Langfuse!</span>
+curl -X POST http://localhost:7860/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"query":"What is RAG?","user_id":"user_demo_1"}'</pre>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     TAB 3: TRACES (Interactive Trace Explorer)
+     ═══════════════════════════════════════════════════════════════════════════ -->
+<div id="tab-traces" class="tab-panel">
+  <div class="card">
+    <div class="card-title">🔍 Simulated Trace Explorer</div>
+    <p style="color:var(--muted); margin-bottom:16px;">Click any row to expand and see child spans. This is what you'll see in the real Langfuse UI at http://localhost:3000</p>
+
+    <!-- Trace header -->
+    <div style="background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:14px 16px; margin-bottom:12px;">
+      <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+        <span class="trace-badge tb-trace">TRACE</span>
+        <span style="font-weight:600; color:#f0f6fc;">request_a4b3c2d1e5f6</span>
+        <span class="info-pill pill-purple">user: user_demo_1</span>
+        <span class="info-pill pill-blue">session: sess_9x4z</span>
+        <span class="info-pill pill-green">conv: conv_rag_001</span>
+        <span style="margin-left:auto; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+          <span style="font-size:11px; color:var(--muted);">Total: 2.63s</span>
+          <span style="font-size:11px; color:var(--muted);">Tokens: 1,842</span>
+          <span style="font-size:11px; color:var(--green);">Cost: $0.013</span>
+          <span class="info-pill pill-green">PASS ✓</span>
+        </span>
+      </div>
+      <div style="margin-top:8px; font-size:12px; color:var(--muted);">Query: "What are Neha Pukale's programming skills and work experience?"</div>
+    </div>
+
+    <!-- Span 1: Query Validation -->
+    <div class="trace-node">
+      <div class="trace-header" onclick="toggleTrace(this)">
+        <span class="arrow">▶</span>
+        <span class="trace-badge tb-span">SPAN</span>
+        <span style="font-weight:500;">query_validation</span>
+        <span class="trace-time">30ms</span>
+      </div>
+      <div class="trace-children">
+        <div class="trace-node">
+          <div class="trace-header" onclick="toggleTrace(this)">
+            <span class="arrow">▶</span>
+            <span class="trace-badge tb-gen">GEN</span>
+            <span style="font-weight:500;">validation_llm_call</span>
+            <span style="font-size:11px; color:var(--muted);">gpt-4o</span>
+            <span class="trace-time">28ms · 180→45 tokens · $0.001</span>
+          </div>
+          <div class="trace-children">
+            <div class="trace-meta">
+              <div class="meta-grid">
+                <span style="color:var(--muted);">Model:</span><span>gpt-4o</span>
+                <span style="color:var(--muted);">Input tokens:</span><span>180</span>
+                <span style="color:var(--muted);">Output tokens:</span><span>45</span>
+                <span style="color:var(--muted);">Output:</span><span>{"is_valid": true, "sanitized_query": "What are Neha Pukale's programming skills and work experience?", "domain_relevant": true}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="trace-meta">
+          <div class="meta-grid">
+            <span style="color:var(--muted);">is_valid:</span><span style="color:var(--green);">true</span>
+            <span style="color:var(--muted);">sanitized_query:</span><span>"What are Neha Pukale's programming skills and work experience?"</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Span 2: Routing -->
+    <div class="trace-node">
+      <div class="trace-header" onclick="toggleTrace(this)">
+        <span class="arrow">▶</span>
+        <span class="trace-badge tb-span">SPAN</span>
+        <span style="font-weight:500;">routing</span>
+        <span class="trace-time">22ms (heuristic — no LLM call)</span>
+      </div>
+      <div class="trace-children">
+        <div class="trace-meta">
+          <div class="meta-grid">
+            <span style="color:var(--muted);">method:</span><span>heuristic (matched: "resume", "Neha")</span>
+            <span style="color:var(--muted);">route:</span><span style="color:var(--accent);">rag</span>
+            <span style="color:var(--muted);">reasoning:</span><span>Query mentions a person's name in a document context</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Span 3: RAG Retrieval (with children) -->
+    <div class="trace-node">
+      <div class="trace-header" onclick="toggleTrace(this)">
+        <span class="arrow">▶</span>
+        <span class="trace-badge tb-span">SPAN</span>
+        <span style="font-weight:500;">rag_retrieval</span>
+        <span class="trace-time">348ms</span>
+      </div>
+      <div class="trace-children">
+        <div class="trace-node">
+          <div class="trace-header" onclick="toggleTrace(this)">
+            <span class="arrow">▶</span>
+            <span class="trace-badge tb-gen">GEN</span>
+            <span style="font-weight:500;">query_embedding</span>
+            <span style="font-size:11px; color:var(--muted);">text-embedding-3-small</span>
+            <span class="trace-time">68ms · 12 tokens · $0.00002</span>
+          </div>
+          <div class="trace-children">
+            <div class="trace-meta">
+              <div class="meta-grid">
+                <span style="color:var(--muted);">Model:</span><span>text-embedding-3-small</span>
+                <span style="color:var(--muted);">Input:</span><span>"What are Neha Pukale's programming skills and work experience?"</span>
+                <span style="color:var(--muted);">Output:</span><span>vector[1536] (not shown)</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="trace-node">
+          <div class="trace-header" onclick="toggleTrace(this)">
+            <span class="arrow">▶</span>
+            <span class="trace-badge tb-span">SPAN</span>
+            <span style="font-weight:500;">vector_search</span>
+            <span class="trace-time">122ms</span>
+          </div>
+          <div class="trace-children">
+            <div class="trace-meta">
+              <div class="meta-grid">
+                <span style="color:var(--muted);">collection:</span><span>chunks</span>
+                <span style="color:var(--muted);">top_k:</span><span>5</span>
+                <span style="color:var(--muted);">threshold:</span><span>0.25</span>
+                <span style="color:var(--muted);">chunk_count:</span><span>5</span>
+                <span style="color:var(--muted);">scores:</span><span>[0.847, 0.821, 0.793, 0.754, 0.712]</span>
+                <span style="color:var(--muted);">sources:</span><span>["Neha_Pukale_Resume.pdf"]</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="trace-meta">
+          <div class="meta-grid">
+            <span style="color:var(--muted);">chunk_count:</span><span>5</span>
+            <span style="color:var(--muted);">top_score:</span><span>0.847</span>
+            <span style="color:var(--muted);">file:</span><span>Neha_Pukale_Resume.pdf</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Span 4: Response Generation -->
+    <div class="trace-node">
+      <div class="trace-header" onclick="toggleTrace(this)">
+        <span class="arrow">▶</span>
+        <span class="trace-badge tb-span">SPAN</span>
+        <span style="font-weight:500;">response_generation</span>
+        <span class="trace-time">1,847ms</span>
+      </div>
+      <div class="trace-children">
+        <div class="trace-node">
+          <div class="trace-header" onclick="toggleTrace(this)">
+            <span class="arrow">▶</span>
+            <span class="trace-badge tb-gen">GEN</span>
+            <span style="font-weight:500;">llm_call</span>
+            <span style="font-size:11px; color:var(--muted);">gpt-4o</span>
+            <span class="trace-time">1,742ms · 1,420→380 tokens · $0.011</span>
+          </div>
+          <div class="trace-children">
+            <div class="trace-meta">
+              <div class="meta-grid">
+                <span style="color:var(--muted);">Model:</span><span>gpt-4o</span>
+                <span style="color:var(--muted);">Temperature:</span><span>0.2</span>
+                <span style="color:var(--muted);">Input tokens:</span><span>1,420</span>
+                <span style="color:var(--muted);">Output tokens:</span><span>380</span>
+                <span style="color:var(--muted);">Cost:</span><span style="color:var(--green);">$0.0110</span>
+                <span style="color:var(--muted);">Output preview:</span><span>"Neha Pukale has the following programming skills: Python (FastAPI, Django), JavaScript..."</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="trace-meta">
+          <div class="meta-grid">
+            <span style="color:var(--muted);">evidence_chunks:</span><span>5</span>
+            <span style="color:var(--muted);">retry_attempt:</span><span>1</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Span 5: Quality Check -->
+    <div class="trace-node">
+      <div class="trace-header" onclick="toggleTrace(this)">
+        <span class="arrow">▶</span>
+        <span class="trace-badge tb-span">SPAN</span>
+        <span style="font-weight:500;">quality_check</span>
+        <span class="trace-time">392ms</span>
+      </div>
+      <div class="trace-children">
+        <div class="trace-node">
+          <div class="trace-header" onclick="toggleTrace(this)">
+            <span class="arrow">▶</span>
+            <span class="trace-badge tb-gen">GEN</span>
+            <span style="font-weight:500;">llm_evaluation</span>
+            <span style="font-size:11px; color:var(--muted);">gpt-4o</span>
+            <span class="trace-time">382ms · 980→85 tokens · $0.001</span>
+          </div>
+          <div class="trace-children">
+            <div class="trace-meta">
+              <div class="meta-grid">
+                <span style="color:var(--muted);">verdict:</span><span style="color:var(--green);">PASS</span>
+                <span style="color:var(--muted);">score:</span><span>0.92</span>
+                <span style="color:var(--muted);">is_grounded:</span><span style="color:var(--green);">true</span>
+                <span style="color:var(--muted);">is_complete:</span><span style="color:var(--green);">true</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="trace-meta">
+          <div class="meta-grid">
+            <span style="color:var(--muted);">quality_score (trace score):</span><span style="color:var(--green);">0.92</span>
+            <span style="color:var(--muted);">comment:</span><span>"verdict=PASS | grounded=True | complete=True"</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">💡 What Each Observation Type Tells You</div>
+    <table>
+      <tr><th>Type</th><th>In This App</th><th>Key Insight</th></tr>
+      <tr><td><span class="trace-badge tb-span">SPAN</span></td><td>query_validation, routing, rag_retrieval, response_generation, quality_check</td><td>Node execution time, input/output summary</td></tr>
+      <tr><td><span class="trace-badge tb-gen">GEN</span></td><td>validation_llm_call, router_llm_call, query_embedding, llm_call, llm_evaluation</td><td>Model name, input/output tokens, exact cost</td></tr>
+      <tr><td><span class="trace-badge tb-event">EVENT</span></td><td>human_interrupt, human_response, routing_decision, empty_retrieval</td><td>What decision was made and when</td></tr>
+      <tr><td><span class="info-pill pill-yellow" style="margin:0;">SCORE</span></td><td>quality_score, has_issues, user_feedback</td><td>Numeric evaluation — filter bad traces</td></tr>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     TAB 4: METRICS
+     ═══════════════════════════════════════════════════════════════════════════ -->
+<div id="tab-metrics" class="tab-panel">
+  <div class="card">
+    <div class="card-title">📊 Dashboard Metrics Overview</div>
+    <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:12px; margin-bottom:20px;">
+      <div class="metric-box"><div class="metric-value">1,247</div><div class="metric-label">Daily Requests</div><div class="metric-delta delta-up">↑ 12% from yesterday</div></div>
+      <div class="metric-box"><div class="metric-value" style="color:var(--green);">1.8s</div><div class="metric-label">Avg Latency</div><div class="metric-delta delta-dn">↓ 0.3s from last week</div></div>
+      <div class="metric-box"><div class="metric-value" style="color:var(--warn);">4.2s</div><div class="metric-label">P95 Latency</div><div class="metric-delta delta-dn">↓ good</div></div>
+      <div class="metric-box"><div class="metric-value" style="color:var(--accent);">1,842</div><div class="metric-label">Avg Tokens/Req</div><div class="metric-delta delta-up">↑ 8% (watch this!)</div></div>
+      <div class="metric-box"><div class="metric-value" style="color:var(--err);">$18.40</div><div class="metric-label">Cost Today</div><div class="metric-delta delta-up">↑ $2.1 from yesterday</div></div>
+      <div class="metric-box"><div class="metric-value" style="color:var(--green);">0.88</div><div class="metric-label">Avg Quality Score</div><div class="metric-delta delta-dn">↑ 0.03 improvement</div></div>
+      <div class="metric-box"><div class="metric-value" style="color:var(--warn);">4.2%</div><div class="metric-label">RAG Empty Rate</div><div class="metric-delta delta-up">↑ needs investigation</div></div>
+      <div class="metric-box"><div class="metric-value" style="color:var(--green);">98.1%</div><div class="metric-label">Success Rate</div><div class="metric-delta delta-dn">↑ good</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">🔍 Debugging Scenarios</div>
+    <div style="margin-bottom:16px;">
+      <h4 style="color:var(--warn); margin-bottom:8px;">Scenario 1: Slow Response (4.8s instead of 1.8s)</h4>
+      <p style="color:var(--muted); font-size:13px; margin-bottom:8px;">In Langfuse: click the slow trace → expand spans</p>
+      <pre>rag_retrieval: 3.1s  ← BIG RED FLAG (normal: 350ms)
+  query_embedding: 48ms   ← OK
+  vector_search: 3,050ms  ← QDRANT IS SLOW
+response_generation: 1.7s ← normal
+
+ROOT CAUSE: Qdrant query is slow because:
+  → collection has 2M vectors but no index
+  → Fix: Create ivfflat index on Qdrant collection
+  → Or: Qdrant pod is under-resourced (CPU/RAM)
+
+WHAT TO DO:
+  curl http://localhost:6333/collections/chunks
+  → check "vectors_count" and "indexed_vectors_count"
+  → if indexed < total: collection not fully indexed</pre>
+    </div>
+    <div style="margin-bottom:16px;">
+      <h4 style="color:var(--warn); margin-bottom:8px;">Scenario 2: Hallucinated Answer</h4>
+      <pre>In Langfuse: filter by quality_score < 0.5
+→ Click offending trace
+→ Expand "response_generation" span
+→ Look at "evidence_chunks" = 0
+
+ROOT CAUSE: RAG retrieved 0 chunks (empty_retrieval event present)
+  The LLM had no context → made up an answer
+  
+TRACE SHOWS:
+  EVENT: empty_retrieval (WARNING level)
+    query: "What is Neha's salary at Google?"
+    chunk_count: 0, threshold: 0.25
+  SPAN: response_generation
+    evidence_chunks: 0
+    answer: "Neha earns $120K at Google" ← HALLUCINATION
+
+FIX: Lower threshold / add more documents / add "I don't know" guardrail</pre>
+    </div>
+    <div style="margin-bottom:16px;">
+      <h4 style="color:var(--warn); margin-bottom:8px;">Scenario 3: Cost Spike ($42/day instead of $18/day)</h4>
+      <pre>In Langfuse: Dashboard → Cost tab → sort by date
+→ Yesterday: $42 (spike!)
+→ Click → filter traces by that date
+
+Pattern found: One user (user_id=user_999) made 500 requests
+Each request has 12,000 input tokens (user is pasting huge documents into chat!)
+
+FIX:
+  1. Add rate limiting per user (10 requests/minute)
+  2. Cap input token count in ChatRequest
+  3. Add token-based context window management</pre>
+    </div>
+    <div>
+      <h4 style="color:var(--warn); margin-bottom:8px;">Scenario 4: Agent Tool Loop</h4>
+      <pre>In Langfuse: filter traces with retry_count >= 3
+→ Found 12 traces where quality_checker looped 3 times
+
+Click one:
+  response_generation (attempt 1): answer about RAG basics
+  quality_check: REVISE — "Answer doesn't cite specific scores"
+  response_generation (attempt 2): same answer
+  quality_check: REVISE — same feedback
+  response_generation (attempt 3): MAX RETRIES forced PASS
+
+ROOT CAUSE: Quality checker feedback too vague (not actionable)
+FIX: Make revision_feedback more specific in quality_checker system prompt</pre>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     TAB 5: RAG OBSERVABILITY
+     ═══════════════════════════════════════════════════════════════════════════ -->
+<div id="tab-rag-obs" class="tab-panel">
+  <div class="card">
+    <div class="card-title">📚 RAG Metrics in Langfuse</div>
+    <div class="grid2">
+      <div>
+        <h4 style="margin-bottom:8px; color:var(--accent);">What is tracked per RAG call</h4>
+        <table>
+          <tr><th>Metric</th><th>Where in Code</th></tr>
+          <tr><td>user query</td><td>trace input</td></tr>
+          <tr><td>rewritten query</td><td>rag_retrieval span input</td></tr>
+          <tr><td>embedding tokens</td><td>query_embedding generation</td></tr>
+          <tr><td>embedding cost</td><td>auto-computed by Langfuse</td></tr>
+          <tr><td>chunk count</td><td>vector_search span output</td></tr>
+          <tr><td>top_k</td><td>rag_retrieval span metadata</td></tr>
+          <tr><td>similarity scores</td><td>vector_search span output</td></tr>
+          <tr><td>source files</td><td>rag_retrieval span output</td></tr>
+          <tr><td>empty retrieval</td><td>EVENT: empty_retrieval (WARNING)</td></tr>
+          <tr><td>retrieval latency</td><td>rag_retrieval span duration</td></tr>
+        </table>
+      </div>
+      <div>
+        <h4 style="margin-bottom:8px; color:var(--accent);">Production RAG Alerts to Set</h4>
+        <div class="alert alert-warn">
+          <strong>Alert 1:</strong> empty_retrieval rate &gt; 5%<br>
+          <span style="font-size:12px; color:var(--muted);">Means queries are not matching your documents. Check: new topics, threshold too high, bad embeddings</span>
+        </div>
+        <div class="alert alert-warn">
+          <strong>Alert 2:</strong> avg similarity score &lt; 0.4<br>
+          <span style="font-size:12px; color:var(--muted);">Poor semantic match. Document collection may not cover query domain.</span>
+        </div>
+        <div class="alert alert-warn">
+          <strong>Alert 3:</strong> vector_search latency &gt; 500ms<br>
+          <span style="font-size:12px; color:var(--muted);">Qdrant is slow. Check indexing, hardware, collection size.</span>
+        </div>
+        <div class="alert alert-info">
+          <strong>Dashboard Query:</strong><br>
+          <code style="font-size:11px;">Traces → Filter: tags contains "empty_retrieval" → group by day → shows retrieval failure rate trend</code>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">💡 How to Improve RAG Quality</div>
+    <pre>RETRIEVAL PRECISION too low? (returning irrelevant chunks)
+  → Increase score threshold (0.25 → 0.40)
+  → Use hybrid search (vector + keyword BM25)
+  → Better chunking strategy (smaller chunks, more overlap)
+
+RETRIEVAL RECALL too low? (missing relevant chunks)
+  → Lower score threshold (0.25 → 0.15)
+  → Increase top_k (5 → 10)
+  → Add query expansion / HyDE (Hypothetical Document Embeddings)
+
+HALLUCINATION despite good retrieval?
+  → Retrieved chunks too long → LLM ignores middle content
+  → Fix: Re-rank chunks, keep only top 3, with higher quality
+  → Fix: Add "only answer from context" to system prompt
+
+EMPTY RETRIEVAL for known documents?
+  → Check: is document actually in Qdrant collection?
+  → Check: is query language same as document language?
+  → Check: is embedding model same for storage and query?</pre>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     TAB 6: AGENT OBSERVABILITY
+     ═══════════════════════════════════════════════════════════════════════════ -->
+<div id="tab-agent-obs" class="tab-panel">
+  <div class="card">
+    <div class="card-title">🤖 LangGraph Agent Observability</div>
+    <div class="grid2">
+      <div>
+        <h4 style="margin-bottom:8px; color:var(--accent);">Node Execution Sequence</h4>
+        <pre style="font-size:11px;">Trace: request_a4b3c2d1
+│
+├── SPAN query_validation (30ms)
+│     input: "What are Neha's skills?"
+│     output: {is_valid:true, query:"..."}
+│
+├── SPAN routing (22ms)
+│     EVENT routing_decision
+│     output: {route:"rag", method:"heuristic"}
+│
+├── SPAN rag_retrieval (348ms)
+│     ├── GEN query_embedding (68ms)
+│     └── SPAN vector_search (122ms)
+│           output: 5 chunks, scores:[0.85,0.82]
+│
+├── SPAN response_generation (1847ms)
+│     └── GEN llm_call (1742ms)
+│           model: gpt-4o
+│           in: 1420 / out: 380 tokens
+│           cost: $0.011
+│
+└── SPAN quality_check (392ms)
+      └── GEN llm_evaluation (382ms)
+      SCORE quality_score=0.92</pre>
+      </div>
+      <div>
+        <h4 style="margin-bottom:8px; color:var(--accent);">What to Monitor</h4>
+        <table>
+          <tr><th>Metric</th><th>Where</th><th>Threshold</th></tr>
+          <tr><td>Router decisions</td><td>routing events</td><td>% human needed &lt;10%</td></tr>
+          <tr><td>Quality retries</td><td>retry_count score</td><td>avg retry &lt;1.5</td></tr>
+          <tr><td>HITL interrupts</td><td>human_interrupt events</td><td>interrupts/day</td></tr>
+          <tr><td>Node failures</td><td>ERROR level spans</td><td>failure rate &lt;1%</td></tr>
+          <tr><td>Total graph time</td><td>trace duration</td><td>P95 &lt;5s</td></tr>
+          <tr><td>LLM call count</td><td>GEN observations</td><td>avg calls/req &lt;4</td></tr>
+        </table>
+        <div class="alert alert-info" style="margin-top:12px;">
+          <strong>Langfuse Query:</strong><br>
+          <code style="font-size:11px;">Traces → Scores → filter quality_score &lt; 0.6 → look at routing pattern → are bad answers concentrated on one route?</code>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     TAB 7: FINE-TUNING
+     ═══════════════════════════════════════════════════════════════════════════ -->
+<div id="tab-finetuning" class="tab-panel">
+  <div class="card">
+    <div class="card-title">🎯 When to Fine-Tune</div>
+    <table>
+      <tr><th>Need</th><th>Solution</th><th>Fine-Tune?</th></tr>
+      <tr><td>Add new knowledge</td><td>RAG (add documents to Qdrant)</td><td class="td-red">❌ No</td></tr>
+      <tr><td>Better instructions</td><td>Improve system prompt</td><td class="td-red">❌ No</td></tr>
+      <tr><td>Faster/cheaper</td><td>Smaller model (gpt-4o-mini)</td><td class="td-red">❌ No</td></tr>
+      <tr><td>Consistent FORMAT</td><td>Fine-tuning teaches the exact format</td><td class="td-green">✅ Yes</td></tr>
+      <tr><td>Domain-specific STYLE</td><td>Fine-tuning on domain examples</td><td class="td-green">✅ Yes</td></tr>
+      <tr><td>Specific BEHAVIOR</td><td>Fine-tuning changes default behavior</td><td class="td-green">✅ Yes</td></tr>
+      <tr><td>Knowledge + Style</td><td>RAG + Fine-tuning together</td><td class="td-yellow">🟡 Both</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="card-title">🔄 Fine-Tuning Pipeline Visual</div>
+    <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:12px 0;">
+      <div class="flow-step" style="background:#1f3c5c; border-color:var(--accent); color:var(--accent);">📝 Define Use Case</div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-step">📊 Collect Dataset</div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-step">🧹 Clean &amp; Format</div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-step">✂️ Train/Val/Test Split</div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-step">📤 Upload to OpenAI</div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-step">🏋️ Fine-Tune Job</div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-step">📈 Evaluate</div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-step">🚀 Deploy</div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-step">📡 Monitor</div>
+    </div>
+
+    <h4 style="margin:16px 0 8px; color:var(--accent);">Sample Training Example (JSONL format)</h4>
+    <pre>{
+  <span class="str">"messages"</span>: [
+    {
+      <span class="str">"role"</span>: <span class="str">"system"</span>,
+      <span class="str">"content"</span>: <span class="str">"You are an expert HR assistant. Answer with bullet points. Cite [Section] names."</span>
+    },
+    {
+      <span class="str">"role"</span>: <span class="str">"user"</span>,
+      <span class="str">"content"</span>: <span class="str">"What programming languages does this candidate know?"</span>
+    },
+    {
+      <span class="str">"role"</span>: <span class="str">"assistant"</span>,
+      <span class="str">"content"</span>: <span class="str">"From [Skills] section:\n• Python (3+ years, primary language)\n• JavaScript/TypeScript (React, Node.js)\n• SQL (PostgreSQL, MySQL)\n• Java (2 years, enterprise applications)"</span>
+    }
+  ]
+}</pre>
+  </div>
+
+  <div class="card">
+    <div class="card-title">⚙️ Run the Pipeline</div>
+    <pre><span class="com"># Run the full pipeline (simulated — no real API calls)</span>
+python -c "
+<span class="kw">from</span> app.fine_tuning.pipeline <span class="kw">import</span> run_pipeline
+result = run_pipeline(simulate=<span class="kw">True</span>)
+print(result)
+"
+
+<span class="com"># Run for real (costs money!)</span>
+python -c "
+<span class="kw">from</span> app.fine_tuning.pipeline <span class="kw">import</span> run_pipeline
+result = run_pipeline(
+    model=<span class="str">'gpt-3.5-turbo'</span>,
+    n_epochs=<span class="num">3</span>,
+    simulate=<span class="kw">False</span>   <span class="com"># ← real API call</span>
+)
+print(result[<span class="str">'fine_tuned_model'</span>])
+"</pre>
+
+    <div class="alert alert-info">
+      <strong>Dataset is at:</strong> <code>data/fine_tuning/train.jsonl</code> (auto-created)<br>
+      <strong>Cost estimate:</strong> ~$0.48 for 20 examples × 3 epochs (gpt-3.5-turbo)<br>
+      <strong>Time:</strong> 30 minutes to 2 hours depending on OpenAI queue
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     TAB 8: MODEL EVALUATION
+     ═══════════════════════════════════════════════════════════════════════════ -->
+<div id="tab-evaluation" class="tab-panel">
+  <div class="card">
+    <div class="card-title">⚖️ Base Model vs Fine-Tuned Model Comparison</div>
+    <table>
+      <tr>
+        <th>Metric</th>
+        <th>Base Model (gpt-4o)</th>
+        <th>Fine-Tuned (ft:gpt-3.5-turbo)</th>
+        <th>Change</th>
+      </tr>
+      <tr>
+        <td>Format Score</td>
+        <td class="td-red">0.24</td>
+        <td class="td-green">0.96</td>
+        <td class="td-green">+0.72 ✅</td>
+      </tr>
+      <tr>
+        <td>Citation Score</td>
+        <td class="td-red">0.10</td>
+        <td class="td-green">0.92</td>
+        <td class="td-green">+0.82 ✅</td>
+      </tr>
+      <tr>
+        <td>Conciseness</td>
+        <td class="td-yellow">0.68</td>
+        <td class="td-green">0.94</td>
+        <td class="td-green">+0.26 ✅</td>
+      </tr>
+      <tr>
+        <td>Hallucination</td>
+        <td class="td-green">0.90</td>
+        <td class="td-green">0.88</td>
+        <td class="td-yellow">-0.02 neutral</td>
+      </tr>
+      <tr>
+        <td>Keyword Recall</td>
+        <td class="td-yellow">0.72</td>
+        <td class="td-green">0.86</td>
+        <td class="td-green">+0.14 ✅</td>
+      </tr>
+      <tr>
+        <td><strong>Overall Score</strong></td>
+        <td><strong class="td-red">0.44</strong></td>
+        <td><strong class="td-green">0.92</strong></td>
+        <td><strong class="td-green">+0.48 ✅</strong></td>
+      </tr>
+      <tr>
+        <td>Avg Latency</td>
+        <td>850ms</td>
+        <td class="td-green">450ms</td>
+        <td class="td-green">47% faster ✅</td>
+      </tr>
+      <tr>
+        <td>Avg Tokens</td>
+        <td>1,240</td>
+        <td class="td-green">680</td>
+        <td class="td-green">45% fewer ✅</td>
+      </tr>
+      <tr>
+        <td>Cost/1K req</td>
+        <td class="td-red">$1.86</td>
+        <td class="td-green">$0.27</td>
+        <td class="td-green">86% cheaper ✅</td>
+      </tr>
+    </table>
+
+    <div class="alert alert-green" style="margin-top:16px;">
+      <strong>RECOMMENDATION: DEPLOY</strong> — Fine-tuned model is significantly better on ALL metrics.
+      Format adherence (+0.72) and citation (+0.82) show the training was very effective.
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">🧪 Run Evaluation</div>
+    <pre><span class="com"># Run evaluation comparison (simulated)</span>
+python -c "
+<span class="kw">from</span> app.fine_tuning.evaluation <span class="kw">import</span> run_full_evaluation
+<span class="kw">import</span> json
+report = run_full_evaluation(simulate=<span class="kw">True</span>)
+print(json.dumps(report[<span class="str">'comparison'</span>], indent=<span class="num">2</span>))
+"
+
+<span class="com"># Traces are logged to Langfuse with tags:</span>
+<span class="com"># "experiment:base-model" vs "experiment:fine-tuned-model"</span>
+<span class="com"># In Langfuse UI: Traces → filter by tag → compare quality_score</span></pre>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     TAB 9: CONVERSATION HISTORY
+     ═══════════════════════════════════════════════════════════════════════════ -->
+<div id="tab-conversation" class="tab-panel">
+  <div class="card">
+    <div class="card-title">💬 Multi-User Conversation Simulator</div>
+    <div class="user-tabs">
+      <div class="user-tab active" onclick="switchUser(0)">👤 Manish (Demo)</div>
+      <div class="user-tab" onclick="switchUser(1)">👤 Priya (Demo)</div>
+      <div class="user-tab" onclick="switchUser(2)">👤 Rahul (Demo)</div>
+    </div>
+
+    <div id="user-info" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; font-size:11px;">
+      <span class="info-pill pill-purple">user_id: user_demo_1</span>
+      <span class="info-pill pill-blue">conversations: 2</span>
+      <span class="info-pill pill-green">total_messages: 14</span>
+    </div>
+
+    <div style="display:flex; gap:8px; margin-bottom:8px; font-size:11px; flex-wrap:wrap;">
+      <div onclick="switchConv(0)" id="conv-tab-0" style="padding:6px 12px; background:var(--accent); color:#000; border-radius:6px; cursor:pointer; font-size:12px;">📁 RAG Discussion</div>
+      <div onclick="switchConv(1)" id="conv-tab-1" style="padding:6px 12px; background:var(--surface2); border:1px solid var(--border); border-radius:6px; cursor:pointer; font-size:12px;">📁 Fine-tuning Help</div>
+    </div>
+
+    <div style="margin-bottom:8px; display:flex; gap:8px; flex-wrap:wrap; font-size:11px;">
+      <span class="info-pill pill-blue">conv_id: conv_rag_001</span>
+      <span class="info-pill pill-green">session_id: sess_9x4z</span>
+      <span class="info-pill pill-yellow">messages: 8</span>
+      <span class="info-pill pill-purple">tokens: 4,820</span>
+    </div>
+
+    <div class="chat-window" id="chat-window">
+      <div class="msg msg-sys">Session started — Monday 9:00 AM</div>
+      <div>
+        <div class="msg-label">Manish • 9:01 AM</div>
+        <div class="msg msg-user">What is RAG?</div>
+      </div>
+      <div>
+        <div class="msg-label">AI • 9:01 AM</div>
+        <div class="msg msg-ai">RAG (Retrieval-Augmented Generation) is a technique that combines document retrieval with LLM generation. Instead of relying only on the model's training knowledge, it first searches your document collection for relevant chunks, then passes those as context to the LLM. This means answers are grounded in your specific documents. [Source: uploaded docs]</div>
+      </div>
+      <div>
+        <div class="msg-label">Manish • 9:05 AM</div>
+        <div class="msg msg-user">How does chunking work in that?</div>
+      </div>
+      <div>
+        <div class="msg-label">AI • 9:06 AM</div>
+        <div class="msg msg-ai">Building on our discussion about RAG — chunking splits large documents into smaller pieces (chunks) before storing them in the vector database. In your codebase, tiktoken is used with cl100k_base tokenizer: 800 tokens max per chunk, 100 overlap, 50 min. The overlap ensures context isn't lost at chunk boundaries.</div>
+      </div>
+    </div>
+
+    <div style="margin-top:12px;">
+      <h4 style="margin-bottom:8px; color:var(--accent);">Context Sent to LLM (for 2nd message)</h4>
+      <pre style="font-size:11px; max-height:160px; overflow-y:auto;">SYSTEM: You are an expert AI assistant.
+
+Previous conversation summary: (none — only 2 messages)
+
+Long-term memory about this user:
+- [Preference] User prefers Python code examples
+- [Fact] User is building a RAG system
+
+--- CONVERSATION HISTORY ---
+User: What is RAG?
+AI: RAG (Retrieval-Augmented Generation) is a technique...
+
+--- CURRENT QUERY ---
+User: How does chunking work in that?
+
+--- RETRIEVED CONTEXT ---
+[Source 1] chunking_guide.pdf: "Text is split into overlapping chunks of 800 tokens..."
+[Source 2] pipeline_docs.pdf: "tiktoken cl100k_base tokenizer is used..."</pre>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">🔄 Message Processing Flow</div>
+    <div id="flow-steps">
+      <div class="flow-box" id="fs1"><div class="flow-number">1</div><div><strong>New Message arrives</strong> — "How does chunking work in that?"</div></div>
+      <div class="flow-box" id="fs2"><div class="flow-number">2</div><div><strong>Load History</strong> — Get last 15 messages from PostgreSQL (sliding window)</div></div>
+      <div class="flow-box" id="fs3"><div class="flow-number">3</div><div><strong>Retrieve Memory</strong> — Semantic search in memory table (pgvector cosine)</div></div>
+      <div class="flow-box" id="fs4"><div class="flow-number">4</div><div><strong>Build Context</strong> — system_prompt + memory + summary + recent messages</div></div>
+      <div class="flow-box" id="fs5"><div class="flow-number">5</div><div><strong>Call LLM</strong> — LangGraph → RAG → response_generator → quality_checker</div></div>
+      <div class="flow-box" id="fs6"><div class="flow-number">6</div><div><strong>Save Message</strong> — Save assistant response + token count to PostgreSQL</div></div>
+      <div class="flow-box" id="fs7"><div class="flow-number">7</div><div><strong>Update Memory</strong> — Extract facts, store embeddings asynchronously</div></div>
+    </div>
+    <button class="btn btn-sm" style="margin-top:12px;" onclick="animateFlow()">▶ Animate Flow</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     TAB 10: SESSIONS
+     ═══════════════════════════════════════════════════════════════════════════ -->
+<div id="tab-sessions" class="tab-panel">
+  <div class="card">
+    <div class="card-title">🗓️ Session vs Conversation — Key Distinction</div>
+    <div class="grid2">
+      <div>
+        <h4 style="margin-bottom:8px; color:var(--accent);">Conversation</h4>
+        <p style="font-size:13px; color:var(--muted); margin-bottom:8px;">The TOPIC. Created once. Can span many days and sessions.</p>
+        <pre style="font-size:11px;">conversation_id: conv_rag_001
+title: "RAG Discussion"
+created: Monday
+messages: 24 (over 3 days)
+status: active</pre>
+      </div>
+      <div>
+        <h4 style="margin-bottom:8px; color:var(--green);">Session</h4>
+        <p style="font-size:13px; color:var(--muted); margin-bottom:8px;">One VISIT. Created on each reconnect. Ends when user closes tab.</p>
+        <pre style="font-size:11px;">session_id: sess_9x4z     ← Monday 9am-10am
+session_id: sess_7y2w     ← Tuesday 2pm-3pm
+session_id: sess_3m8q     ← Wednesday 11am
+→ All part of conv_rag_001</pre>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">📊 Session Metrics</div>
+    <pre>Analytics you can build from sessions table:
+  
+  Average session duration:
+    SELECT AVG(EXTRACT(EPOCH FROM (ended_at - started_at))/60) FROM sessions
+    Result: 23 minutes average
+  
+  Messages per session:
+    SELECT AVG(message_count) FROM sessions
+    Result: 8.2 messages/session
+  
+  Daily active sessions:
+    SELECT DATE(started_at), COUNT(*) FROM sessions GROUP BY 1
+  
+  Drop-off sessions (started but no messages):
+    SELECT COUNT(*) FROM sessions WHERE message_count = 0</pre>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     TAB 11: CONTEXT WINDOW
+     ═══════════════════════════════════════════════════════════════════════════ -->
+<div id="tab-context-window" class="tab-panel">
+  <div class="card">
+    <div class="card-title">🪟 Context Window Visualizer — GPT-4o (128K tokens)</div>
+    <p style="color:var(--muted); margin-bottom:16px;">This shows how the 128K token budget is allocated for a typical request.</p>
+
+    <div id="ctx-scenario" style="margin-bottom:8px; font-size:13px;">
+      Scenario: <strong id="ctx-label">Normal Request (few messages)</strong>
+    </div>
+
+    <div class="ctx-track" id="ctx-track" style="margin-bottom:8px;">
+      <div class="ctx-bar" id="cb-sys" style="width:1.56%; background:#58a6ff;">sys</div>
+      <div class="ctx-bar" id="cb-mem" style="width:3.9%; background:#bc8cff;">mem</div>
+      <div class="ctx-bar" id="cb-msg" style="width:15.6%; background:#3fb950;">msgs</div>
+      <div class="ctx-bar" id="cb-docs" style="width:31.25%; background:#d2a679;">docs</div>
+      <div class="ctx-bar" id="cb-query" style="width:0.78%; background:#f85149;">q</div>
+      <div class="ctx-bar" id="cb-free" style="width:46.9%; background:#21262d; color:var(--muted);">free: 60K</div>
+    </div>
+
+    <div style="display:flex; gap:6px; flex-wrap:wrap; font-size:11px; margin-bottom:16px;">
+      <span class="info-pill pill-blue">System: 2K</span>
+      <span class="info-pill pill-purple">Memory: 5K</span>
+      <span class="info-pill pill-green">Messages: 20K</span>
+      <span class="info-pill pill-yellow">Documents: 40K</span>
+      <span class="info-pill" style="background:#3c1f1f;color:#f85149;">Query: 1K</span>
+      <span class="info-pill" style="background:var(--surface2);color:var(--muted);">Free: 60K</span>
+    </div>
+
+    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+      <button class="btn btn-sm btn-secondary" onclick="ctxScenario('normal')">Normal</button>
+      <button class="btn btn-sm btn-secondary" onclick="ctxScenario('heavy')">100 Messages</button>
+      <button class="btn btn-sm" style="background:var(--err); font-size:11px;" onclick="ctxScenario('overflow')">Overflow!</button>
+      <button class="btn btn-sm btn-green" onclick="ctxScenario('optimized')">After Optimization</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">📐 Strategies Comparison</div>
+    <table>
+      <tr><th>Strategy</th><th>How It Works</th><th>Best For</th><th>Downside</th></tr>
+      <tr><td>last_n_messages</td><td>Always take last N messages</td><td>Short chats</td><td>Fails for long conversations, ignores token count</td></tr>
+      <tr><td>sliding_window</td><td>Include messages until token budget full</td><td>Medium chats</td><td>May cut off important context abruptly</td></tr>
+      <tr><td>summarize_old</td><td>LLM summarizes old messages into 1 paragraph</td><td>Long chats</td><td>Adds latency, summary loses detail</td></tr>
+      <tr><td>semantic_retrieve</td><td>Vector search for relevant old messages</td><td>Reference queries</td><td>Misses conversational continuity</td></tr>
+      <tr><td><strong>hybrid ✅</strong></td><td>summary + recent 20 + semantic search</td><td><strong>Production</strong></td><td>Most complex to implement</td></tr>
+    </table>
+    <div class="alert alert-green" style="margin-top:12px;">
+      <strong>Production recommendation:</strong> Use <code>strategy="hybrid"</code> in <code>context_manager.build_context()</code>.
+      This is already implemented in your codebase.
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     TAB 12: MEMORY
+     ═══════════════════════════════════════════════════════════════════════════ -->
+<div id="tab-memory" class="tab-panel">
+  <div class="card">
+    <div class="card-title">🧠 Short-term vs Long-term Memory</div>
+    <div class="grid2">
+      <div class="card" style="border-color:var(--accent);">
+        <div style="color:var(--accent); font-weight:600; margin-bottom:8px;">Short-term Memory</div>
+        <p style="font-size:12px; color:var(--muted); margin-bottom:8px;">What just happened in this session.</p>
+        <ul style="font-size:12px; line-height:1.8; padding-left:16px;">
+          <li>Recent 15-20 messages from this conversation</li>
+          <li>Current task/workflow state</li>
+          <li>LangGraph checkpoint (interrupt/resume)</li>
+        </ul>
+        <div style="margin-top:8px; font-size:11px; color:var(--muted);">
+          <strong>Storage:</strong> PostgreSQL messages table + Redis (optional cache)<br>
+          <strong>Lifespan:</strong> Session or conversation
+        </div>
+      </div>
+      <div class="card" style="border-color:var(--green);">
+        <div style="color:var(--green); font-weight:600; margin-bottom:8px;">Long-term Memory</div>
+        <p style="font-size:12px; color:var(--muted); margin-bottom:8px;">What the app knows about the user across all conversations.</p>
+        <ul style="font-size:12px; line-height:1.8; padding-left:16px;">
+          <li>User preferences ("likes Python examples")</li>
+          <li>User facts ("senior backend engineer")</li>
+          <li>Instructions ("always use bullet points")</li>
+          <li>Past topics ("discussed RAG last week")</li>
+        </ul>
+        <div style="margin-top:8px; font-size:11px; color:var(--muted);">
+          <strong>Storage:</strong> PostgreSQL memory table (with 1536-d vectors)<br>
+          <strong>Lifespan:</strong> Permanent (or until user deletes)
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">🔍 Memory Retrieval Example</div>
+    <pre>User says: "Give me the same style dashboard we discussed last week."
+
+STEP 1: Embed the query
+  embed("same style dashboard discussed last week")
+  → vector [0.1, -0.3, 0.8, ...] (1536 floats)
+
+STEP 2: Cosine search in memory table
+  SELECT content, memory_type, similarity
+  FROM memory
+  WHERE user_id = 'user_demo_1'
+  ORDER BY embedding &lt;=&gt; query_vector  ← pgvector operator
+  LIMIT 5
+
+STEP 3: Results (by similarity)
+  similarity=0.91: "User prefers dark-themed grid layout dashboards"
+  similarity=0.87: "User asked about dashboard design on 2026-09-14"
+  similarity=0.74: "User uses Grafana and custom CSS for dashboards"
+
+STEP 4: Inject into system prompt
+  "Long-term memory about this user:
+   - [Preference] User prefers dark-themed grid layout dashboards
+   - [Episodic] User asked about dashboard design on 2026-09-14
+   - [Fact] User uses Grafana and custom CSS for dashboards"
+
+STEP 5: LLM now generates the right style without re-asking</pre>
+  </div>
+
+  <div class="card">
+    <div class="card-title">💾 Storing Memory</div>
+    <pre><span class="kw">from</span> app.memory.memory_retrieval <span class="kw">import</span> store_memory
+<span class="kw">from</span> app.services <span class="kw">import</span> llm_service
+
+<span class="com"># Manual store (e.g. user said "remember I prefer Python")</span>
+store_memory(
+    user_id=<span class="str">"00000000-0000-0000-0000-000000000001"</span>,
+    content=<span class="str">"User prefers Python code examples over pseudocode"</span>,
+    memory_type=<span class="str">"preference"</span>,
+    importance=<span class="num">0.8</span>,
+    embed_fn=<span class="kw">lambda</span> t: llm_service.embed(t),  <span class="com"># sync wrapper needed</span>
+)
+
+<span class="com"># Auto-extract from conversation (runs after every session)</span>
+<span class="kw">from</span> app.memory.memory_retrieval <span class="kw">import</span> extract_and_store_memories
+extract_and_store_memories(
+    user_id=user_id,
+    messages=recent_messages,
+    llm_chat_fn=<span class="kw">lambda</span> msgs: llm_service.chat(msgs),
+    embed_fn=<span class="kw">lambda</span> t: llm_service.embed(t),
+)</pre>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     TAB 13: MULTI-USER ARCHITECTURE
+     ═══════════════════════════════════════════════════════════════════════════ -->
+<div id="tab-multiuser" class="tab-panel">
+  <div class="card">
+    <div class="card-title">📈 Architecture Evolution by Scale</div>
+    <div class="grid2">
+      <div class="card">
+        <div style="color:var(--accent); font-weight:600; margin-bottom:8px;">10 Users (Current)</div>
+        <ul style="font-size:12px; line-height:1.8; padding-left:16px; color:var(--text);">
+          <li>Single PostgreSQL (port 5433)</li>
+          <li>Single FastAPI process</li>
+          <li>No caching needed</li>
+          <li>2-10 DB connections</li>
+        </ul>
+        <div style="font-size:11px; color:var(--muted); margin-top:8px;">Infrastructure cost: ~$0/month (local)</div>
+      </div>
+      <div class="card">
+        <div style="color:var(--green); font-weight:600; margin-bottom:8px;">1,000 Users</div>
+        <ul style="font-size:12px; line-height:1.8; padding-left:16px; color:var(--text);">
+          <li>PostgreSQL + PgBouncer (connection pool)</li>
+          <li>Redis for session caching (5min TTL)</li>
+          <li>2-4 FastAPI replicas</li>
+          <li>nginx load balancer</li>
+          <li>Background Celery for memory extraction</li>
+        </ul>
+        <div style="font-size:11px; color:var(--muted); margin-top:8px;">Infrastructure: ~$200/month (cloud)</div>
+      </div>
+      <div class="card">
+        <div style="color:var(--warn); font-weight:600; margin-bottom:8px;">100,000 Users</div>
+        <ul style="font-size:12px; line-height:1.8; padding-left:16px; color:var(--text);">
+          <li>PostgreSQL read replicas (2-3)</li>
+          <li>Table partitioning by user_id</li>
+          <li>Redis cluster for distributed cache</li>
+          <li>Kubernetes (8-16 pods)</li>
+          <li>API rate limiting (token bucket)</li>
+          <li>Archive messages older than 1 year</li>
+        </ul>
+        <div style="font-size:11px; color:var(--muted); margin-top:8px;">Infrastructure: ~$2,000/month</div>
+      </div>
+      <div class="card">
+        <div style="color:var(--err); font-weight:600; margin-bottom:8px;">1M+ Users</div>
+        <ul style="font-size:12px; line-height:1.8; padding-left:16px; color:var(--text);">
+          <li>Postgres horizontal sharding (Citus)</li>
+          <li>Multi-region deployment</li>
+          <li>CDN for static assets</li>
+          <li>Message queues (Kafka/SQS)</li>
+          <li>Dedicated Qdrant cluster</li>
+          <li>Full observability (Langfuse + Prometheus)</li>
+        </ul>
+        <div style="font-size:11px; color:var(--muted); margin-top:8px;">Infrastructure: ~$20,000+/month</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     TAB 14: DATABASE
+     ═══════════════════════════════════════════════════════════════════════════ -->
+<div id="tab-database" class="tab-panel">
+  <div class="card">
+    <div class="card-title">🗄️ Schema Overview</div>
+    <pre style="font-size:11px;">
+  users (1 row per registered user)
+    id (UUID PK) → external_id (from auth) → name → email → metadata → created_at
+       ↓
+  conversations (1 row per chat topic)
+    id (UUID PK) → user_id (FK) → title → summary → message_count → total_tokens
+       ↓
+  sessions (1 row per browser visit)
+    id (UUID PK) → conversation_id (FK) → user_id (FK) → thread_id → started_at → ended_at
+       ↓
+  messages (1 row per message)
+    id (UUID PK) → conversation_id (FK) → session_id (FK) → role → content
+    token_count → embedding VECTOR(1536) → model_used → langfuse_trace_id
+       ↑
+  memory (1 row per remembered fact)
+    id (UUID PK) → user_id (FK) → memory_type → content → embedding VECTOR(1536)
+    importance (0-1) → access_count → expires_at
+    </pre>
+  </div>
+
+  <div class="card">
+    <div class="card-title">⚡ Apply Schema</div>
+    <pre><span class="com"># Apply schema to your existing PostgreSQL</span>
+psql -h localhost -p 5433 -U ai_user -d ai_assistant \
+     -f langgraph-agent/app/database/schema.sql
+
+<span class="com"># Verify tables created</span>
+psql -h localhost -p 5433 -U ai_user -d ai_assistant \
+     -c "\dt" | grep -E "(users|conversations|sessions|messages|memory)"
+
+<span class="com"># Test: insert and query a user</span>
+psql -h localhost -p 5433 -U ai_user -d ai_assistant \
+     -c "SELECT * FROM users WHERE external_id = 'user_demo_1';"</pre>
+  </div>
+
+  <div class="card">
+    <div class="card-title">🔍 Key Queries</div>
+    <pre style="font-size:12px;"><span class="com">-- All conversations for a user (latest first)</span>
+<span class="kw">SELECT</span> title, message_count, total_tokens, updated_at
+<span class="kw">FROM</span> conversations
+<span class="kw">WHERE</span> user_id = <span class="str">'00000000-0000-0000-0000-000000000001'</span>
+<span class="kw">ORDER BY</span> updated_at <span class="kw">DESC</span>;
+
+<span class="com">-- Last 20 messages for context window</span>
+<span class="kw">SELECT</span> role, content, token_count, created_at
+<span class="kw">FROM</span> messages
+<span class="kw">WHERE</span> conversation_id = <span class="str">'conv-uuid-here'</span>
+<span class="kw">ORDER BY</span> created_at <span class="kw">DESC LIMIT</span> <span class="num">20</span>;
+
+<span class="com">-- Semantic search for relevant messages</span>
+<span class="kw">SELECT</span> role, content, <span class="num">1</span> - (embedding &lt;=&gt; query_vec) <span class="kw">AS</span> similarity
+<span class="kw">FROM</span> messages
+<span class="kw">WHERE</span> conversation_id = <span class="str">'conv-uuid'</span>
+<span class="kw">ORDER BY</span> embedding &lt;=&gt; query_vec
+<span class="kw">LIMIT</span> <span class="num">5</span>;</pre>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     TAB 15: COMPLETE REQUEST FLOW
+     ═══════════════════════════════════════════════════════════════════════════ -->
+<div id="tab-request-flow" class="tab-panel">
+  <div class="card">
+    <div class="card-title">🚀 Complete Production Request Flow</div>
+    <p style="color:var(--muted); margin-bottom:16px; font-size:13px;">
+      User sends: <strong>"Explain chunking again but relate it to my previous RAG question."</strong><br>
+      Click each step to see what happens internally.
+    </p>
+
+    <div id="rf-steps">
+      <div class="flow-box" id="rf1" onclick="rfHighlight(1)" style="cursor:pointer;">
+        <div class="flow-number">1</div>
+        <div><strong>Frontend → FastAPI POST /api/chat</strong></div>
+        <div style="font-size:11px; color:var(--muted); margin-top:2px; display:none;" id="rf1-detail">
+          Body: {query: "Explain chunking again...", user_id: "user_demo_1", conversation_id: "conv_rag_001"}
+        </div>
+      </div>
+      <div class="flow-box" id="rf2" onclick="rfHighlight(2)" style="cursor:pointer;">
+        <div class="flow-number">2</div>
+        <div><strong>Auth & User Identification</strong></div>
+        <div style="font-size:11px; color:var(--muted); margin-top:2px; display:none;" id="rf2-detail">
+          get_or_create_user(external_id="user_demo_1") → {id: "uuid-001", name: "Manish"}
+        </div>
+      </div>
+      <div class="flow-box" id="rf3" onclick="rfHighlight(3)" style="cursor:pointer;">
+        <div class="flow-number">3</div>
+        <div><strong>Conversation Lookup</strong></div>
+        <div style="font-size:11px; color:var(--muted); margin-top:2px; display:none;" id="rf3-detail">
+          get_conversation("conv_rag_001") → {title: "RAG Discussion", message_count: 8}
+        </div>
+      </div>
+      <div class="flow-box" id="rf4" onclick="rfHighlight(4)" style="cursor:pointer;">
+        <div class="flow-number">4</div>
+        <div><strong>Load Recent History (sliding window)</strong></div>
+        <div style="font-size:11px; color:var(--muted); margin-top:2px; display:none;" id="rf4-detail">
+          get_recent_messages(conv_id, limit=50) → 8 messages<br>
+          sliding_window(messages, max_tokens=20000) → last 8 fit (4,820 tokens)
+        </div>
+      </div>
+      <div class="flow-box" id="rf5" onclick="rfHighlight(5)" style="cursor:pointer;">
+        <div class="flow-number">5</div>
+        <div><strong>Memory Retrieval (pgvector)</strong></div>
+        <div style="font-size:11px; color:var(--muted); margin-top:2px; display:none;" id="rf5-detail">
+          retrieve_relevant_memory(user_id, "chunking RAG question") → 3 memories:<br>
+          • "User is building a RAG system" (similarity=0.89)<br>
+          • "User prefers Python examples" (similarity=0.76)
+        </div>
+      </div>
+      <div class="flow-box" id="rf6" onclick="rfHighlight(6)" style="cursor:pointer;">
+        <div class="flow-number">6</div>
+        <div><strong>Build Context Prompt</strong></div>
+        <div style="font-size:11px; color:var(--muted); margin-top:2px; display:none;" id="rf6-detail">
+          system = base_prompt + long_term_memory + conversation_summary<br>
+          messages = [system] + recent_history + [current_query]<br>
+          Token budget: sys=2K + mem=1K + msgs=5K + docs=40K + query=1K = 49K (< 128K)
+        </div>
+      </div>
+      <div class="flow-box" id="rf7" onclick="rfHighlight(7)" style="cursor:pointer;">
+        <div class="flow-number">7</div>
+        <div><strong>Langfuse Trace Created</strong></div>
+        <div style="font-size:11px; color:var(--muted); margin-top:2px; display:none;" id="rf7-detail">
+          create_trace(request_id="req_a4b3c2d1", user_id="user_demo_1", session_id="sess_9x4z")
+        </div>
+      </div>
+      <div class="flow-box" id="rf8" onclick="rfHighlight(8)" style="cursor:pointer;">
+        <div class="flow-number">8</div>
+        <div><strong>LangGraph: query_validator → router → rag_retriever</strong></div>
+        <div style="font-size:11px; color:var(--muted); margin-top:2px; display:none;" id="rf8-detail">
+          query_validator: is_valid=true (30ms)<br>
+          router: heuristic → rag (mentions "RAG question", "previous") (22ms)<br>
+          rag_retriever: "chunking RAG" → 5 chunks from docs (348ms)
+        </div>
+      </div>
+      <div class="flow-box" id="rf9" onclick="rfHighlight(9)" style="cursor:pointer;">
+        <div class="flow-number">9</div>
+        <div><strong>LangGraph: response_generator → quality_checker</strong></div>
+        <div style="font-size:11px; color:var(--muted); margin-top:2px; display:none;" id="rf9-detail">
+          response_generator: GPT-4o generates answer with context + history (1842ms)<br>
+          quality_checker: PASS (score=0.92) — answer is grounded and complete
+        </div>
+      </div>
+      <div class="flow-box" id="rf10" onclick="rfHighlight(10)" style="cursor:pointer;">
+        <div class="flow-number">10</div>
+        <div><strong>Save Message + Flush Langfuse</strong></div>
+        <div style="font-size:11px; color:var(--muted); margin-top:2px; display:none;" id="rf10-detail">
+          save_message(role="assistant", content="...", token_count=380, latency_ms=2262)<br>
+          finalize_trace(output=answer, success=True)<br>
+          langfuse.flush() → sends all spans to http://localhost:3000
+        </div>
+      </div>
+      <div class="flow-box" id="rf11" onclick="rfHighlight(11)" style="cursor:pointer;">
+        <div class="flow-number">11</div>
+        <div><strong>Return SSE Response to Client</strong></div>
+        <div style="font-size:11px; color:var(--muted); margin-top:2px; display:none;" id="rf11-detail">
+          Streaming response (node_update events) → final event with answer<br>
+          Header: X-Conversation-ID: conv_rag_001 | X-Session-ID: sess_9x4z
+        </div>
+      </div>
+    </div>
+
+    <button class="btn btn-sm" style="margin-top:12px;" onclick="animateRF()">▶ Animate Full Flow</button>
+    <button class="btn btn-sm btn-secondary" style="margin-top:12px;" onclick="resetRF()">↩ Reset</button>
+  </div>
+
+  <div class="card">
+    <div class="card-title">⏱️ Total Latency Breakdown</div>
+    <pre>FastAPI overhead:                  ~5ms
+User + conversation lookup:         ~8ms (PostgreSQL indexed)
+History retrieval (8 messages):    ~12ms
+Memory retrieval (pgvector):       ~45ms
+Context building:                   ~3ms
+Langfuse trace create:              ~2ms (async)
+────────────────────────────────────────
+Pre-processing total:               75ms
+
+LangGraph execution:
+  query_validator:                  30ms
+  router (heuristic):               22ms
+  rag_retrieval (embed + search):  348ms
+  response_generation (LLM):     1,847ms  ← bottleneck
+  quality_check:                   392ms
+────────────────────────────────────────
+LangGraph total:                 2,639ms
+
+Save response + flush Langfuse:     ~15ms
+────────────────────────────────────────
+TOTAL END-TO-END:               ~2,730ms  (2.7 seconds)</pre>
+  </div>
+
+  <div class="card">
+    <div class="card-title">🏃 Running Everything</div>
+    <pre><span class="com"># 1. Start Langfuse</span>
+cd langgraph-agent
+docker compose -f docker-compose.langfuse.yml up -d
+<span class="com"># Open http://localhost:3000 → create project → copy keys to .env</span>
+
+<span class="com"># 2. Apply PostgreSQL schema (uses existing postgres container)</span>
+psql -h localhost -p 5433 -U ai_user -d ai_assistant \
+     -f app/database/schema.sql
+
+<span class="com"># 3. Install new dependencies</span>
+source venv/bin/activate
+pip install langfuse psycopg2-binary pgvector
+
+<span class="com"># 4. Start the app</span>
+uvicorn app.main:app --host 0.0.0.0 --port 7860 --reload
+
+<span class="com"># 5. Test with conversation history</span>
+curl -X POST http://localhost:7860/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"query":"What is RAG?","user_id":"user_demo_1"}'
+
+<span class="com"># 6. Continue conversation (same user + conversation)</span>
+curl -X POST http://localhost:7860/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"query":"How does chunking work in that?","user_id":"user_demo_1","conversation_id":"CONV_ID_FROM_HEADER"}'
+
+<span class="com"># 7. Check conversation history</span>
+curl http://localhost:7860/api/users/user_demo_1/conversations
+
+<span class="com"># 8. View traces in Langfuse</span>
+open http://localhost:3000  <span class="com"># → Traces tab</span></pre>
+  </div>
+</div>
+
+<!-- ── JavaScript ─────────────────────────────────────────────────────────── -->
+<script>
+// Tab switching
+function showTab(id) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  const panel = document.getElementById('tab-' + id);
+  if (panel) {
+    panel.classList.add('active');
+    event.target.classList.add('active');
+  }
+}
+
+// Trace tree toggle
+function toggleTrace(header) {
+  header.classList.toggle('open');
+  const children = header.nextElementSibling;
+  if (children && children.classList.contains('trace-children')) {
+    children.classList.toggle('open');
+  }
+}
+
+// Conversation simulator
+const users = [
+  {
+    name: "Manish (Demo)", id: "user_demo_1", convs: 2, msgs: 14,
+    conversations: [
+      {
+        name: "RAG Discussion", id: "conv_rag_001", session: "sess_9x4z", msgs: 8, tokens: 4820,
+        chat: [
+          {role:"sys", text:"Session started — Monday 9:00 AM"},
+          {role:"user", text:"What is RAG?", time:"9:01 AM"},
+          {role:"ai", text:"RAG (Retrieval-Augmented Generation) combines document retrieval with LLM generation. It first searches your vector database for relevant document chunks, then passes those as context to the LLM."},
+          {role:"user", text:"How does chunking work in that?", time:"9:05 AM"},
+          {role:"ai", text:"Building on our RAG discussion — chunking splits documents into smaller pieces before storing them. Your codebase uses tiktoken with cl100k_base: 800 max tokens, 100 overlap, 50 min tokens per chunk."},
+        ]
+      },
+      {
+        name: "Fine-tuning Help", id: "conv_ft_002", session: "sess_2q1r", msgs: 6, tokens: 3210,
+        chat: [
+          {role:"sys", text:"New conversation"},
+          {role:"user", text:"When should I use fine-tuning?", time:"2:00 PM"},
+          {role:"ai", text:"Fine-tune when you need consistent output FORMAT or domain-specific STYLE. For knowledge, use RAG instead — it's cheaper and updatable. Your codebase supports both approaches."},
+        ]
+      }
+    ]
+  },
+  {
+    name: "Priya (Demo)", id: "user_demo_2", convs: 1, msgs: 5,
+    conversations: [
+      {
+        name: "LangGraph Questions", id: "conv_lg_003", session: "sess_7p4k", msgs: 5, tokens: 2480,
+        chat: [
+          {role:"sys", text:"New conversation"},
+          {role:"user", text:"How does LangGraph routing work?", time:"11:00 AM"},
+          {role:"ai", text:"LangGraph routing uses conditional edges. In your app: the router node checks heuristics first (regex patterns for doc/web keywords), then falls back to an LLM if ambiguous. The result is stored in state['route'] which conditional_edge functions read."},
+        ]
+      }
+    ]
+  },
+  {
+    name: "Rahul (Demo)", id: "user_demo_3", convs: 1, msgs: 3,
+    conversations: [
+      {
+        name: "Database Design", id: "conv_db_004", session: "sess_5m8n", msgs: 3, tokens: 1560,
+        chat: [
+          {role:"sys", text:"New conversation"},
+          {role:"user", text:"Why do we need a sessions table?", time:"3:30 PM"},
+          {role:"ai", text:"Sessions track individual browser visits. A conversation can span many sessions (you come back different days). Session data enables: rate limiting per visit, analytics on session length, and detecting abandoned sessions."},
+        ]
+      }
+    ]
+  }
+];
+
+let currentUser = 0;
+let currentConv = 0;
+
+function switchUser(idx) {
+  currentUser = idx;
+  currentConv = 0;
+  document.querySelectorAll('.user-tab').forEach((t,i) => t.classList.toggle('active', i===idx));
+  renderUserInfo();
+  renderConvTabs();
+  renderChat();
+}
+
+function switchConv(idx) {
+  currentConv = idx;
+  renderConvTabs();
+  renderChat();
+}
+
+function renderUserInfo() {
+  const u = users[currentUser];
+  document.getElementById('user-info').innerHTML =
+    `<span class="info-pill pill-purple">user_id: ${u.id}</span>
+     <span class="info-pill pill-blue">conversations: ${u.convs}</span>
+     <span class="info-pill pill-green">total_messages: ${u.msgs}</span>`;
+}
+
+function renderConvTabs() {
+  const u = users[currentUser];
+  const container = document.querySelector('#tab-conversation .user-tabs + div + div');
+  if (!container) return;
+  container.innerHTML = '';
+  u.conversations.forEach((c, i) => {
+    const d = document.createElement('div');
+    d.id = `conv-tab-${i}`;
+    d.onclick = () => switchConv(i);
+    d.style.cssText = `padding:6px 12px; border-radius:6px; cursor:pointer; font-size:12px; ${i===currentConv ? 'background:var(--accent);color:#000;' : 'background:var(--surface2);border:1px solid var(--border);'}`;
+    d.textContent = '📁 ' + c.name;
+    container.appendChild(d);
+  });
+}
+
+function renderChat() {
+  const u = users[currentUser];
+  const c = u.conversations[currentConv] || u.conversations[0];
+  const cw = document.getElementById('chat-window');
+  if (!cw) return;
+
+  // Update meta pills
+  const metaDiv = cw.previousElementSibling;
+  if (metaDiv) {
+    metaDiv.innerHTML =
+      `<span class="info-pill pill-blue">conv_id: ${c.id}</span>
+       <span class="info-pill pill-green">session_id: ${c.session}</span>
+       <span class="info-pill pill-yellow">messages: ${c.msgs}</span>
+       <span class="info-pill pill-purple">tokens: ${c.tokens.toLocaleString()}</span>`;
+  }
+
+  cw.innerHTML = c.chat.map(m => {
+    if (m.role === 'sys') return `<div class="msg msg-sys">${m.text}</div>`;
+    if (m.role === 'user') return `<div><div class="msg-label">${u.name.split(' ')[0]} • ${m.time||''}</div><div class="msg msg-user">${m.text}</div></div>`;
+    return `<div><div class="msg-label">AI •</div><div class="msg msg-ai">${m.text}</div></div>`;
+  }).join('');
+}
+
+// Flow animation
+let flowTimer = null;
+function animateFlow() {
+  clearTimeout(flowTimer);
+  const steps = ['fs1','fs2','fs3','fs4','fs5','fs6','fs7'];
+  steps.forEach(id => { const el = document.getElementById(id); if(el) { el.classList.remove('highlight','done'); } });
+  let i = 0;
+  function next() {
+    if (i > 0) { const prev = document.getElementById(steps[i-1]); if(prev) { prev.classList.remove('highlight'); prev.classList.add('done'); } }
+    if (i < steps.length) { const cur = document.getElementById(steps[i]); if(cur) cur.classList.add('highlight'); i++; flowTimer = setTimeout(next, 700); }
+  }
+  next();
+}
+
+// Context window scenarios
+function ctxScenario(s) {
+  const track = document.getElementById('ctx-track');
+  const label = document.getElementById('ctx-label');
+  const bars = {
+    normal:     [1.56, 3.9, 15.6, 31.25, 0.78, 46.9,  '2K', '5K', '20K', '40K', '1K',  'Free: 60K', 'Normal Request (few messages)'],
+    heavy:      [1.56, 3.9, 40.0, 31.25, 0.78, 22.5,  '2K', '5K', '51K', '40K', '1K',  'Free: 29K', '100 Messages (near limit!)'],
+    overflow:   [1.56, 3.9, 62.0, 31.25, 0.78, 0.5,   '2K', '5K', '79K', '40K', '1K',  'OVERFLOW!', '⚠️ OVERFLOW — 1000 messages, truncation needed!'],
+    optimized:  [1.56, 3.9, 7.8,  31.25, 0.78, 54.7,  '2K', '5K', '10K', '40K', '1K',  'Free: 70K', 'After Hybrid Strategy (summary + recent 10)'],
+  };
+  const b = bars[s];
+  const ids = ['cb-sys','cb-mem','cb-msg','cb-docs','cb-query','cb-free'];
+  const colors = ['#58a6ff','#bc8cff','#3fb950','#d2a679','#f85149','#21262d'];
+  ids.forEach((id, i) => {
+    const el = document.getElementById(id);
+    if (el) { el.style.width = b[i] + '%'; el.style.background = colors[i]; el.textContent = b[i+6]; }
+  });
+  if (label) label.textContent = b[12];
+}
+
+// Request flow animation
+let rfTimer = null;
+function animateRF() {
+  clearTimeout(rfTimer);
+  resetRF();
+  let i = 1;
+  function next() {
+    if (i > 11) return;
+    const el = document.getElementById('rf' + i);
+    if (el) {
+      el.classList.add('highlight');
+      const detail = document.getElementById('rf' + i + '-detail');
+      if (detail) detail.style.display = 'block';
+    }
+    if (i > 1) {
+      const prev = document.getElementById('rf' + (i-1));
+      if (prev) { prev.classList.remove('highlight'); prev.classList.add('done'); }
+    }
+    i++;
+    rfTimer = setTimeout(next, 800);
+  }
+  next();
+}
+
+function rfHighlight(n) {
+  document.querySelectorAll('[id^="rf"]').forEach(el => {
+    if (el.id.startsWith('rf') && !el.id.includes('detail')) el.classList.remove('highlight');
+  });
+  const el = document.getElementById('rf' + n);
+  if (el) el.classList.toggle('highlight');
+  const detail = document.getElementById('rf' + n + '-detail');
+  if (detail) detail.style.display = detail.style.display === 'none' ? 'block' : 'none';
+}
+
+function resetRF() {
+  for (let i = 1; i <= 11; i++) {
+    const el = document.getElementById('rf' + i);
+    if (el) { el.classList.remove('highlight', 'done'); }
+    const detail = document.getElementById('rf' + i + '-detail');
+    if (detail) detail.style.display = 'none';
+  }
+}
+
+// Init
+renderUserInfo();
+renderChat();
+</script>
+</body>
+</html>

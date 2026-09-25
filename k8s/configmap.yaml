@@ -1,0 +1,64 @@
+---
+# configmap.yaml — Non-sensitive configuration for all services.
+#
+# ConfigMaps store configuration as key-value pairs.
+# They are mounted as environment variables in Pods.
+#
+# Rule: Non-sensitive values go in ConfigMap.
+#       Sensitive values (API keys, passwords) go in Secret.
+#
+# Apply: kubectl apply -f k8s/configmap.yaml -n ai-assistant
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-assistant-config
+  namespace: ai-assistant
+  labels:
+    app.kubernetes.io/name: enterprise-ai-assistant
+data:
+  # Database URLs
+  POSTGRES_HOST: "postgres-service"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "ai_assistant"
+
+  # Redis
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+
+  # Qdrant
+  QDRANT_HOST: "qdrant-service"
+  QDRANT_PORT: "6333"
+
+  # Neo4j
+  NEO4J_URI: "bolt://neo4j-service:7687"
+
+  # MinIO
+  MINIO_ENDPOINT: "minio-service:9000"
+  MINIO_BUCKET: "documents"
+  MINIO_SECURE: "false"
+
+  # Celery
+  CELERY_BROKER_URL: "redis://redis-service:6379/0"
+  CELERY_RESULT_BACKEND: "redis://redis-service:6379/1"
+
+  # Application
+  BACKEND_HOST: "0.0.0.0"
+  BACKEND_PORT: "8000"
+  BACKEND_WORKERS: "4"
+  LOG_LEVEL: "INFO"
+  DEBUG: "false"
+  ENABLE_DEBUG_PANEL: "true"
+
+  # OpenAI models
+  OPENAI_CHAT_MODEL: "gpt-4o"
+  OPENAI_EMBEDDING_MODEL: "text-embedding-3-small"
+  OPENAI_WHISPER_MODEL: "whisper-1"
+
+  # Document processing
+  MAX_UPLOAD_SIZE_MB: "50"
+  CHUNK_MAX_TOKENS: "800"
+  CHUNK_OVERLAP_TOKENS: "100"
+  EMBEDDING_TOP_K: "5"
+
+  # CORS
+  CORS_ORIGINS: "http://frontend-service,https://your-domain.com"

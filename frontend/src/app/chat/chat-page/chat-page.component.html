@@ -181,12 +181,12 @@
 
           <div class="debug-section" *ngIf="msg.debug.cost_usd">
             <div class="debug-label">Cost</div>
-            <div class="debug-value">${{ msg.debug.cost_usd?.toFixed(5) }}</div>
+            <div class="debug-value">${{ msg.debug.cost_usd.toFixed(5) }}</div>
           </div>
 
           <div class="debug-section" *ngIf="msg.debug.latency_ms">
             <div class="debug-label">Latency</div>
-            <div class="debug-value">{{ msg.debug.latency_ms?.toFixed(0) }}ms</div>
+            <div class="debug-value">{{ msg.debug.latency_ms.toFixed(0) }}ms</div>
           </div>
 
           <div class="debug-section" *ngIf="msg.debug.langfuse_trace_id">

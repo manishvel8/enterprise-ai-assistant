@@ -1,0 +1,357 @@
+# k8s/network-policy.yaml — Kubernetes Network Policies (zero-trust networking)
+#
+# WHAT ARE NETWORK POLICIES?
+#   By default in Kubernetes, ALL pods can talk to ALL other pods.
+#   This is like having no firewall — if any pod is compromised, the attacker
+#   can reach every other service in the cluster.
+#
+#   NetworkPolicies let you restrict traffic at the pod level:
+#     - Which pods can RECEIVE traffic (ingress rules)
+#     - Which pods can SEND traffic (egress rules)
+#
+#   Think of it as a firewall for pod-to-pod communication.
+#
+# HOW NETWORK POLICIES WORK:
+#   1. Policies use label selectors to choose which pods they apply to.
+#   2. A pod with ANY NetworkPolicy attached gets a default-deny for that direction.
+#   3. You then whitelist specific sources/destinations.
+#
+# REQUIRES: A CNI plugin that supports NetworkPolicies (Calico, Cilium, Weave).
+#   Note: Default kubeadm/minikube may use flannel (no NetworkPolicy support).
+#   For minikube: minikube start --cni=calico
+
+---
+# ── 1. Default Deny All ───────────────────────────────────────────────────────
+# Deny ALL ingress and egress in the namespace by default.
+# Every specific communication must be explicitly whitelisted below.
+#
+# WHY START WITH DENY-ALL?
+#   Zero-trust principle: "never trust, always verify"
+#   No implicit communication pathways — every connection is deliberate.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: ai-assistant
+spec:
+  podSelector: {}    # applies to ALL pods in namespace
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# ── 2. Allow DNS (critical — pods need DNS to resolve service names) ───────────
+# Without this, pods can't resolve "postgres-service" → IP address.
+# DNS runs in kube-system namespace on port 53 (UDP and TCP).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: ai-assistant
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+---
+# ── 3. Backend API — ingress from Ingress Controller only ─────────────────────
+# The backend should only receive HTTP traffic from the nginx-ingress controller.
+# It should NOT be directly reachable by other pods or from outside.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend-ingress-policy
+  namespace: ai-assistant
+spec:
+  podSelector:
+    matchLabels:
+      app: backend
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow from nginx-ingress controller pods
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - port: 8000
+    # Allow from Prometheus (monitoring namespace) for /metrics scraping
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 8000
+  egress:
+    # Allow to PostgreSQL
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - port: 5432
+    # Allow to Qdrant
+    - to:
+        - podSelector:
+            matchLabels:
+              app: qdrant
+      ports:
+        - port: 6333
+    # Allow to Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - port: 6379
+    # Allow to Neo4j
+    - to:
+        - podSelector:
+            matchLabels:
+              app: neo4j
+      ports:
+        - port: 7687
+    # Allow to LangGraph agent
+    - to:
+        - podSelector:
+            matchLabels:
+              app: langgraph-agent
+      ports:
+        - port: 7860
+    # Allow HTTPS to OpenAI API (and other external LLM APIs)
+    - ports:
+        - port: 443
+          protocol: TCP
+
+---
+# ── 4. LangGraph Agent — ingress from backend and ingress controller ───────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: langgraph-agent-ingress-policy
+  namespace: ai-assistant
+spec:
+  podSelector:
+    matchLabels:
+      app: langgraph-agent
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow from backend (internal service-to-service)
+    - from:
+        - podSelector:
+            matchLabels:
+              app: backend
+      ports:
+        - port: 7860
+    # Allow from nginx-ingress (for direct LangGraph API access)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - port: 7860
+    # Allow Prometheus scraping
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 7860
+  egress:
+    # PostgreSQL (conversation state + checkpointer)
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - port: 5432
+    # Qdrant (vector search)
+    - to:
+        - podSelector:
+            matchLabels:
+              app: qdrant
+      ports:
+        - port: 6333
+    # Redis (session cache)
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - port: 6379
+    # Langfuse (observability — may be external)
+    - to:
+        - podSelector:
+            matchLabels:
+              app: langfuse
+      ports:
+        - port: 3000
+    # OpenAI API + Tavily (web search)
+    - ports:
+        - port: 443
+          protocol: TCP
+
+---
+# ── 5. Worker — ingress from backend, egress to datastores ────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: worker-network-policy
+  namespace: ai-assistant
+spec:
+  podSelector:
+    matchLabels:
+      app: worker
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: backend
+      ports:
+        - port: 8001
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app: qdrant
+      ports:
+        - port: 6333
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - port: 6379
+    # OpenAI for embeddings
+    - ports:
+        - port: 443
+          protocol: TCP
+
+---
+# ── 6. PostgreSQL — only internal services can connect ───────────────────────
+# No external access to the database ever.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-network-policy
+  namespace: ai-assistant
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values: ["backend", "langgraph-agent", "worker", "langfuse"]
+      ports:
+        - port: 5432
+
+---
+# ── 7. Qdrant — only backend + langgraph-agent + worker can access ────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: qdrant-network-policy
+  namespace: ai-assistant
+spec:
+  podSelector:
+    matchLabels:
+      app: qdrant
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values: ["backend", "langgraph-agent", "worker"]
+      ports:
+        - port: 6333
+        - port: 6334   # gRPC
+
+---
+# ── 8. Redis — only backend + langgraph-agent + worker ────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-network-policy
+  namespace: ai-assistant
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values: ["backend", "langgraph-agent", "worker"]
+      ports:
+        - port: 6379
+
+---
+# ── 9. Frontend — only allow from Ingress, no direct pod access ───────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-network-policy
+  namespace: ai-assistant
+spec:
+  podSelector:
+    matchLabels:
+      app: frontend
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - port: 80
+  egress:
+    # Frontend only needs to talk to the backend (for SSR or health checks)
+    - to:
+        - podSelector:
+            matchLabels:
+              app: backend
+      ports:
+        - port: 8000

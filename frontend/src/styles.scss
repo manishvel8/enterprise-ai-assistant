@@ -1,9 +1,40 @@
-/* Global styles — applied to every page */
+/* Global styles — must live here (not in app.component.scss).
+   Angular encapsulates component styles, so body/:root rules in a
+   component never apply and leave a white page with invisible light text. */
+
+:root {
+  --bg-primary: #0f0f0f;
+  --bg-secondary: #1a1a1a;
+  --bg-surface: #242424;
+  --text-primary: #f0f0f0;
+  --text-secondary: #a0a0a0;
+  --accent: #7c6efe;
+  --accent-hover: #9b8fff;
+  --border: #2e2e2e;
+  --success: #4ade80;
+  --warning: #facc15;
+  --error: #f87171;
+  --nav-height: 56px;
+  --footer-height: 40px;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
 
 html, body {
   height: 100%;
   margin: 0;
   padding: 0;
+}
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  min-height: 100vh;
 }
 
 /* Scrollbar styling for dark theme */
@@ -42,6 +73,7 @@ html, body {
   font-weight: 600;
   background: #242424;
   border: 1px solid #2e2e2e;
+  color: var(--text-secondary);
 }
 
 .badge--success {

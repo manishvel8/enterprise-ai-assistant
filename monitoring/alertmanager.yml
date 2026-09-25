@@ -1,0 +1,146 @@
+# monitoring/alertmanager.yml — Alertmanager routing and notification config.
+#
+# WHAT IS ALERTMANAGER?
+#   Alertmanager receives fired alerts from Prometheus and routes them to
+#   the right team via the right channel (email, Slack, PagerDuty).
+#
+# KEY CONCEPTS:
+#   route:    define how to route alerts (match by labels)
+#   receiver: define WHERE to send the alert (Slack channel, email, etc.)
+#   grouping: bundle multiple alerts about the same issue into one notification
+#   inhibit:  suppress lower-severity alerts when a higher one is firing
+#             (e.g., don't alert about slow queries if the DB is completely down)
+#
+# TESTING:
+#   curl -X POST http://localhost:9093/api/v1/alerts \
+#     -H "Content-Type: application/json" \
+#     -d '[{"labels":{"alertname":"TestAlert","severity":"warning","team":"backend"}}]'
+
+global:
+  # How long to wait before re-sending an alert that is still firing
+  resolve_timeout: 5m
+
+  # Default Slack API URL (override in receiver config)
+  slack_api_url: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
+
+# ── Routing tree ──────────────────────────────────────────────────────────────
+# Prometheus sends ALL alerts here. Routing decides which receiver gets it.
+#
+# Tree structure:
+#   route (root, catches everything)
+#     ├── severity=critical → critical-channel
+#     ├── team=ai           → ai-team-channel
+#     └── default           → general-channel
+route:
+  # Default receiver (catches anything not matched by sub-routes)
+  receiver: general-channel
+
+  # Bundle alerts: wait 30s for more alerts with the same labels before sending
+  group_by: ["alertname", "team", "severity"]
+  group_wait: 30s          # wait for initial grouping
+  group_interval: 5m        # wait before sending new grouped notification
+  repeat_interval: 12h      # resend if still firing after 12h
+
+  routes:
+    # Critical alerts → immediate page
+    - match:
+        severity: critical
+      receiver: critical-channel
+      group_wait: 0s          # no wait — send immediately
+      repeat_interval: 1h
+
+    # AI team alerts (LLM, LangGraph, Langfuse)
+    - match:
+        team: ai
+      receiver: ai-team-channel
+
+    # Infrastructure alerts (Kubernetes, database)
+    - match:
+        team: ops
+      receiver: ops-channel
+
+# ── Receivers ─────────────────────────────────────────────────────────────────
+receivers:
+
+  # ── General channel (all alerts) ─────────────────────────────────────────
+  - name: general-channel
+    slack_configs:
+      - channel: "#ai-assistant-alerts"
+        title: "[{{ .Status | toUpper }}] {{ .GroupLabels.alertname }}"
+        text: |
+          {{ range .Alerts }}
+          *Summary:* {{ .Annotations.summary }}
+          *Severity:* {{ .Labels.severity }}
+          *Description:* {{ .Annotations.description }}
+          {{ end }}
+        send_resolved: true
+
+  # ── Critical channel ──────────────────────────────────────────────────────
+  - name: critical-channel
+    slack_configs:
+      - channel: "#ai-assistant-critical"
+        title: "🚨 CRITICAL: {{ .GroupLabels.alertname }}"
+        text: |
+          {{ range .Alerts }}
+          *Service DOWN or Critical Issue*
+          {{ .Annotations.summary }}
+          {{ .Annotations.description }}
+          {{ if .Annotations.runbook }}Runbook: {{ .Annotations.runbook }}{{ end }}
+          {{ end }}
+        send_resolved: true
+    # Also send email for critical alerts
+    email_configs:
+      - to: "oncall@example.com"
+        from: "alertmanager@example.com"
+        smarthost: "smtp.example.com:587"
+        auth_username: "alertmanager@example.com"
+        auth_password: "REPLACE_WITH_SMTP_PASSWORD"
+        subject: "🚨 CRITICAL ALERT: {{ .GroupLabels.alertname }}"
+        html: |
+          <h2>Critical Alert: {{ .GroupLabels.alertname }}</h2>
+          {{ range .Alerts }}
+          <p><strong>Summary:</strong> {{ .Annotations.summary }}</p>
+          <p><strong>Description:</strong> {{ .Annotations.description }}</p>
+          {{ end }}
+
+  # ── AI Team channel ───────────────────────────────────────────────────────
+  - name: ai-team-channel
+    slack_configs:
+      - channel: "#ai-team-alerts"
+        title: "[{{ .Status | toUpper }}] AI: {{ .GroupLabels.alertname }}"
+        text: |
+          {{ range .Alerts }}
+          {{ .Annotations.summary }}
+          {{ .Annotations.description }}
+          {{ end }}
+        send_resolved: true
+
+  # ── Ops channel ───────────────────────────────────────────────────────────
+  - name: ops-channel
+    slack_configs:
+      - channel: "#ops-alerts"
+        title: "[{{ .Status | toUpper }}] Ops: {{ .GroupLabels.alertname }}"
+        text: |
+          {{ range .Alerts }}
+          {{ .Annotations.summary }}
+          {{ .Annotations.description }}
+          {{ end }}
+        send_resolved: true
+
+# ── Inhibition rules ──────────────────────────────────────────────────────────
+# Suppress lower-severity alerts when a higher-severity one is already firing.
+# Example: if BackendDown is firing, suppress HighErrorRate (redundant noise).
+inhibit_rules:
+  - source_match:
+      severity: critical
+      alertname: BackendDown
+    target_match:
+      alertname: HighErrorRate
+    equal: ["service"]
+
+  - source_match:
+      severity: critical
+      alertname: LangGraphAgentDown
+    target_match:
+      alertname: HighChatLatency
+    equal: ["service"]

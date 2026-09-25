@@ -19,7 +19,21 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.api import health, chat, documents
+from app.api import health, chat, documents, eval
+
+# Prometheus metrics (optional — gracefully skipped if not installed)
+try:
+    from prometheus_fastapi_instrumentator import Instrumentator as PrometheusInstrumentator
+    _PROMETHEUS_AVAILABLE = True
+except ImportError:
+    _PROMETHEUS_AVAILABLE = False
+
+# Auth router (JWT login/refresh/me endpoints)
+try:
+    from app.api import auth as auth_router
+    _AUTH_AVAILABLE = True
+except ImportError:
+    _AUTH_AVAILABLE = False
 
 # Configure application-level logging
 logging.basicConfig(
@@ -44,17 +58,13 @@ async def lifespan(app: FastAPI):
     Milestone 17: Initialize Neo4j driver.
     Milestone 23: Initialize Langfuse client.
     """
-    # --- STARTUP ---
+        # --- STARTUP ---
     logger.info(f"Starting {settings.app_name} v{settings.app_version}")
     logger.info(f"Debug mode: {settings.backend_debug}")
     logger.info(f"CORS origins: {settings.cors_origins}")
     logger.info(f"OpenAI model: {settings.openai_chat_model}")
 
     # --- Initialize PostgreSQL ---
-    # Milestone 8: Enable when PostgreSQL is running.
-    # Uses create_all() to create tables if they don't exist.
-    # In production, use Alembic migrations instead.
-    postgres_url = settings.postgres_url
     if settings.postgres_password and settings.postgres_password != "":
         try:
             from app.db.postgres import init_db
@@ -65,21 +75,28 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("POSTGRES_PASSWORD not set — running without PostgreSQL")
 
-    # TODO Milestone 9: Initialize Redis
-    # from app.services.cache_service import init_redis
-    # await init_redis()
+    # --- Initialize Qdrant collection ---
+    try:
+        from app.db.vector_store import ensure_collection
+        ensure_collection()
+        logger.info("Qdrant collection verified")
+    except Exception as e:
+        logger.warning(f"Qdrant not available: {e}")
 
-    # TODO Milestone 14: Initialize Qdrant
-    # from app.db.vector_store import init_qdrant
-    # init_qdrant()
+    # --- Initialize Neo4j schema ---
+    try:
+        from app.db.neo4j_client import setup_schema
+        setup_schema()
+        logger.info("Neo4j schema applied")
+    except Exception as e:
+        logger.warning(f"Neo4j not available: {e}")
 
-    # TODO Milestone 17: Initialize Neo4j
-    # from app.db.neo4j_client import init_neo4j
-    # init_neo4j()
-
-    # TODO Milestone 23: Initialize Langfuse
-    # from app.services.langfuse_service import init_langfuse
-    # init_langfuse()
+    # --- Initialize Langfuse ---
+    try:
+        from app.services.langfuse_service import get_langfuse_client
+        get_langfuse_client()
+    except Exception as e:
+        logger.warning(f"Langfuse not available: {e}")
 
     logger.info("Application startup complete. Accepting requests.")
     yield
@@ -134,8 +151,22 @@ app.add_middleware(
 # --- Register API Routers ---
 # Each router is defined in its own file under app/api/
 app.include_router(health.router)
+# Auth endpoints (requires python-jose + passlib; gracefully skipped if absent)
+if _AUTH_AVAILABLE:
+    app.include_router(auth_router.router)
+    logger.info("JWT authentication enabled — POST /api/auth/login")
+else:
+    logger.warning("Auth router not available — running without authentication")
+
+# Prometheus /metrics endpoint
+# WHY: Prometheus scrapes http://backend:8000/metrics every 15s.
+#      The instrumentator auto-records: request count, duration, status codes.
+if _PROMETHEUS_AVAILABLE:
+    PrometheusInstrumentator().instrument(app).expose(app, endpoint="/metrics")
+    logger.info("Prometheus metrics enabled — GET /metrics")
 app.include_router(chat.router)
 app.include_router(documents.router)
+app.include_router(eval.router)
 
 
 @app.get("/", tags=["Root"])

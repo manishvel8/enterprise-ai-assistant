@@ -1,0 +1,161 @@
+---
+# .github/workflows/security.yml — Security scanning pipeline.
+#
+# Runs:
+#   - On every push to main (immediate security check)
+#   - Weekly on Sunday at midnight (scheduled scan for new CVEs)
+#   - On demand (workflow_dispatch)
+#
+# WHAT WE SCAN:
+#   Bandit:     Python SAST (static analysis) — finds insecure code patterns
+#   pip-audit:  Python dependency CVEs — finds known vulnerable packages
+#   Trivy:      Docker image CVEs — finds vulnerable OS packages
+#
+# EXAMPLE BANDIT FINDINGS:
+#   B106: hardcoded_password_funcarg (password="secret" in code)
+#   B501: request_with_no_cert_validation (verify=False in requests)
+#   B608: hardcoded_sql_expressions (SQL injection risk)
+#
+# EXAMPLE TRIVY FINDINGS:
+#   CVE-2023-XXXX: OpenSSL 1.1.1 buffer overflow (CRITICAL, fixable)
+
+name: Security Scanning
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 0 * * 0"    # every Sunday at midnight
+  workflow_dispatch:
+
+jobs:
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Bandit SAST (Python static analysis)
+  # ──────────────────────────────────────────────────────────────────────────
+  bandit-sast:
+    name: Bandit SAST
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Bandit
+        run: pip install bandit[toml]
+
+      - name: Run Bandit on backend
+        run: |
+          echo "=== Bandit Security Scan: Backend ==="
+          bandit -r backend/app/ \
+            -f json \
+            -o bandit-backend-report.json \
+            --severity-level medium \
+            || true   # don't fail CI on warnings, just report
+
+          # Display human-readable summary
+          bandit -r backend/app/ \
+            --severity-level medium \
+            --confidence-level medium \
+            || true
+
+      - name: Run Bandit on LangGraph agent
+        run: |
+          echo "=== Bandit Security Scan: LangGraph Agent ==="
+          bandit -r langgraph-agent/app/ \
+            -f json \
+            -o bandit-langgraph-report.json \
+            --severity-level medium \
+            || true
+
+      - name: Upload Bandit reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bandit-reports
+          path: "*-report.json"
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # pip-audit (Python dependency CVEs)
+  # ──────────────────────────────────────────────────────────────────────────
+  pip-audit:
+    name: pip-audit (Dependency CVEs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Audit backend dependencies
+        run: |
+          echo "=== pip-audit: Backend ==="
+          pip-audit -r backend/requirements.txt \
+            --format json \
+            --output pip-audit-backend.json \
+            || true   # report but don't block (packages may be pinned intentionally)
+
+          # Human-readable output
+          pip-audit -r backend/requirements.txt || true
+
+      - name: Audit LangGraph dependencies
+        run: |
+          echo "=== pip-audit: LangGraph Agent ==="
+          pip-audit -r langgraph-agent/requirements.txt || true
+
+      - name: Upload audit reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pip-audit-reports
+          path: "pip-audit-*.json"
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Trivy image scanning
+  # ──────────────────────────────────────────────────────────────────────────
+  trivy-scan:
+    name: Trivy Container Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build backend image for scanning
+        run: |
+          docker build -t ai-backend:scan ./backend
+
+      - name: Scan backend image (Trivy)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "ai-backend:scan"
+          format: "table"
+          severity: "CRITICAL,HIGH"
+          exit-code: "0"
+          ignore-unfixed: true      # ignore CVEs with no fix available
+
+      - name: Build langgraph image for scanning
+        run: |
+          docker build -t ai-langgraph:scan ./langgraph-agent
+
+      - name: Scan langgraph image (Trivy)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "ai-langgraph:scan"
+          format: "table"
+          severity: "CRITICAL,HIGH"
+          exit-code: "0"
+          ignore-unfixed: true
+
+      # Scan the filesystem (IaC misconfigs, secrets in code)
+      - name: Trivy filesystem scan (secrets + IaC)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          format: "table"
+          severity: "CRITICAL,HIGH"
+          exit-code: "0"
+          scanners: "vuln,secret,misconfig"
