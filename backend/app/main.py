@@ -178,3 +178,4 @@ async def root():
         "docs": "/docs",
         "health": "/health",
     }
+import this_module_does_not_exist
