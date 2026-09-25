@@ -1059,16 +1059,36 @@ kubectl get nodes
 </div>
 
 <div class="card">
-  <div class="card-title">Install Kubernetes Dashboard</div>
-  <div class="cmd-block nodirpre">
-    <pre><span class="com"># Deploy the dashboard</span>
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.7.0/aio/deploy/recommended.yaml
+  <div class="card-title">Install Kubernetes Dashboard + Token Login</div>
+  <div class="box box-warn" style="margin-bottom:12px">
+    <strong>Gotcha on this machine:</strong>
+    <code>kubectl apply -f https://raw.githubusercontent.com/...</code> often fails with
+    <code>Unable to connect to the server: unexpected EOF</code> or hangs —
+    because <code>raw.githubusercontent.com</code> is blocked/slow (same as Git SSL timeouts).<br>
+    <strong>Fix:</strong> apply the <em>local</em> copy (already in the repo), or fetch via <code>gh api</code>.
+  </div>
 
-<span class="com"># Wait for dashboard pods to start</span>
-kubectl get pods -n kubernetes-dashboard -w
-<span class="com"># Wait until all show Running</span>
+  <div class="cmd-block">
+    <div class="dir-label">~/…/enterprise-ai-assistant/</div>
+    <pre><span class="com"># 0. Confirm minikube is up first</span>
+minikube status
+kubectl get nodes
+<span class="com"># Expect: host/kubelet/apiserver Running, node STATUS=Ready</span>
 
-<span class="com"># Create admin-user ServiceAccount</span>
+<span class="com"># 1. Deploy dashboard — USE LOCAL FILE (recommended)</span>
+kubectl apply -f k8s/dashboard/recommended.yaml
+
+<span class="com"># OR if local file missing — download via gh API (works when raw.githubusercontent.com fails):</span>
+<span class="com"># gh api repos/kubernetes/dashboard/contents/aio/deploy/recommended.yaml?ref=v2.7.0 \</span>
+<span class="com">#   --jq .content | base64 -d &gt; k8s/dashboard/recommended.yaml</span>
+<span class="com"># kubectl apply -f k8s/dashboard/recommended.yaml</span>
+
+<span class="com"># 2. Wait for pods</span>
+kubectl get pods -n kubernetes-dashboard
+kubectl wait --for=condition=available deployment/kubernetes-dashboard \
+  -n kubernetes-dashboard --timeout=120s
+
+<span class="com"># 3. Create admin-user (for Token login)</span>
 cat &lt;&lt;'EOF' | kubectl apply -f -
 apiVersion: v1
 kind: ServiceAccount
@@ -1090,23 +1110,46 @@ subjects:
   namespace: kubernetes-dashboard
 EOF
 
-<span class="com"># Generate LOGIN TOKEN (copy this entire output)</span>
-kubectl -n kubernetes-dashboard create token admin-user
-<span class="com"># eyJhbGciOiJSUzI1NiIsImtpZCI6Ii... (long string)</span>
-
-<span class="com"># Start proxy to access dashboard (keep this terminal running)</span>
-kubectl proxy &amp;
-echo "Dashboard URL:"
-echo "http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/"</pre>
+<span class="com"># 4. Generate LOGIN TOKEN (copy the entire output)</span>
+kubectl -n kubernetes-dashboard create token admin-user</pre>
   </div>
+
+  <div class="cmd-block nodirpre">
+    <pre><span class="com"># 5. Start proxy — keep this terminal open</span>
+kubectl proxy
+
+<span class="com"># 6. Open in browser:</span>
+<span class="com"># http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/</span></pre>
+  </div>
+
   <div class="box box-info">
     <strong>Login steps:</strong><br>
-    1. Open the dashboard URL above in browser<br>
-    2. Select <strong>Token</strong> radio button<br>
-    3. Paste the token from the command above<br>
+    1. Open the URL above<br>
+    2. Select <strong>Token</strong><br>
+    3. Paste the token from step 4<br>
     4. Click <strong>Sign in</strong><br><br>
-    You'll see: All namespaces, Nodes, Pods, Deployments, Services, Ingress — with a visual UI!
+    You should see Nodes, Pods, Deployments, Services in the UI.
   </div>
+
+  <h4 style="margin:14px 0 8px">Error → Fix</h4>
+  <table>
+    <tr><th>Error</th><th>Cause</th><th>Fix</th></tr>
+    <tr>
+      <td><code>Unable to connect to the server: unexpected EOF</code></td>
+      <td>minikube down, OR fetch from raw.githubusercontent.com timed out</td>
+      <td><code>minikube start</code> then apply <code>k8s/dashboard/recommended.yaml</code> (not the HTTPS raw URL)</td>
+    </tr>
+    <tr>
+      <td>kubectl hangs on apply URL</td>
+      <td><code>raw.githubusercontent.com</code> blocked</td>
+      <td>Use local YAML or <code>gh api ... | base64 -d</code></td>
+    </tr>
+    <tr>
+      <td>Dashboard blank / connection refused on :8001</td>
+      <td><code>kubectl proxy</code> not running</td>
+      <td>Run <code>kubectl proxy</code> in another terminal</td>
+    </tr>
+  </table>
 </div>
 
 <div class="card">
@@ -2005,12 +2048,26 @@ kubectl get nodes</pre>
 <div class="ex" id="x17">
   <input type="checkbox" id="c17" onchange="chk(17)">
   <h4>Step 17 — Install K8s Dashboard &amp; Login with Token <span class="tag tp">k8s</span></h4>
-  <div class="cmd-block nodirpre">
-    <pre><span class="com"># Deploy dashboard</span>
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.7.0/aio/deploy/recommended.yaml
+  <div class="box box-warn" style="margin:8px 0">
+    Do <strong>not</strong> use <code>kubectl apply -f https://raw.githubusercontent.com/...</code> on this network —
+    it often fails with <code>unexpected EOF</code>. Use the local file below.
+  </div>
+  <div class="cmd-block">
+    <div class="dir-label">~/…/enterprise-ai-assistant/</div>
+    <pre><span class="com"># Confirm cluster</span>
+minikube status &amp;&amp; kubectl get nodes
 
-<span class="com"># Create admin user</span>
-cat << 'EOF' | kubectl apply -f -
+<span class="com"># Deploy from LOCAL copy (avoids raw.githubusercontent.com timeout)</span>
+kubectl apply -f k8s/dashboard/recommended.yaml
+
+<span class="com"># If file missing, fetch via gh API then apply:</span>
+<span class="com"># mkdir -p k8s/dashboard</span>
+<span class="com"># gh api repos/kubernetes/dashboard/contents/aio/deploy/recommended.yaml?ref=v2.7.0 \</span>
+<span class="com">#   --jq .content | base64 -d &gt; k8s/dashboard/recommended.yaml</span>
+<span class="com"># kubectl apply -f k8s/dashboard/recommended.yaml</span>
+
+<span class="com"># Admin user for Token login</span>
+cat &lt;&lt;'EOF' | kubectl apply -f -
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -2031,14 +2088,15 @@ subjects:
   namespace: kubernetes-dashboard
 EOF
 
-<span class="com"># Get the login token (COPY THIS OUTPUT)</span>
-kubectl -n kubernetes-dashboard create token admin-user
+<span class="com"># Copy this token</span>
+kubectl -n kubernetes-dashboard create token admin-user</pre>
+  </div>
+  <div class="cmd-block nodirpre">
+    <pre><span class="com"># Separate terminal — keep running</span>
+kubectl proxy
 
-<span class="com"># Start proxy (keep this terminal)</span>
-kubectl proxy &
-
-<span class="com"># Open this URL in browser:</span>
-echo "http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/"</pre>
+<span class="com"># Browser → Token → paste → Sign in</span>
+<span class="com"># http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/</span></pre>
   </div>
   <div class="box box-ok">✅ Dashboard opens. Select Token, paste the token, click Sign In. You see all K8s resources in UI!</div>
 </div>

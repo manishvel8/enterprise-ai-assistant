@@ -2007,3 +2007,112 @@ Refresh the HTML and open **GitHub Setup**:
 ```bash
 xdg-open docs/hands-on/06-production-engineering.html
 ```
+Here’s what was wrong and what’s ready now.
+
+### Don’t commit these
+- `kubectl` and `minikube-linux-amd64` — installer binaries (~100MB+). Removed from staging and added to `.gitignore`.
+
+### Ready to commit
+- `.gitignore`
+- `docs/hands-on/06-production-engineering.html` (GitHub daily push + auth fixes)
+- `docs/Commands/commands.txt`
+- `docs/plans/*` (your plan copies)
+
+### Push them
+
+```bash
+cd ~/Documents/Carrers/AI_Project/enterprise-ai-assistant
+
+git commit -m "docs: GitHub push workflow, auth fixes, and plans"
+
+git push
+```
+
+If you don’t want the plan files in the repo:
+
+```bash
+git restore --staged docs/plans/
+git commit -m "docs: update production engineering guide and commands"
+git push
+```
+You’re on **your account profile settings** (`github.com/settings/profile`). CI secrets live under **the repository’s Settings**, not your personal profile.
+
+### Correct path (click exactly this)
+
+1. Open your repo:  
+   **https://github.com/manishvel8/enterprise-ai-assistant**
+
+2. At the **top of that repo page** (Code | Issues | Pull requests | Actions | …), click **Settings**  
+   - Not the gear icon on your avatar / “Public profile”
+
+3. In the **left sidebar** of the repo Settings page, scroll to **Security** (or **Secrets and variables**).
+
+4. Click **Secrets and variables** → **Actions**
+
+5. Click **New repository secret**
+
+Direct link (should work if you’re logged in as the owner):
+
+**https://github.com/manishvel8/enterprise-ai-assistant/settings/secrets/actions**
+
+---
+
+### Add these secrets (one by one)
+
+| Name | Value |
+|------|--------|
+| `OPENAI_API_KEY` | your real `sk-...` key |
+| `SECRET_KEY` | output of the command below |
+| `SLACK_WEBHOOK_URL` | optional — skip for now |
+
+Generate `SECRET_KEY` in your terminal:
+
+```bash
+python3 -c "import secrets; print(secrets.token_hex(32))"
+```
+
+For each secret:
+1. **New repository secret**
+2. **Name** = exact name above (case-sensitive)
+3. **Secret** = the value
+4. **Add secret**
+
+---
+
+### If you still don’t see “Secrets and variables”
+
+- You must be on the **repo** Settings page (URL contains `/enterprise-ai-assistant/settings`)
+- You must be the **owner** (you are: `manishvel8`)
+- On mobile/narrow UI, open the left sidebar / “…” menu
+
+**Wrong:** `github.com/settings/...` (account)  
+**Right:** `github.com/manishvel8/enterprise-ai-assistant/settings/secrets/actions`
+### What went wrong
+`Unable to connect to the server: unexpected EOF` here was mostly a **network fetch failure**: your machine can’t reliably reach `raw.githubusercontent.com` (same kind of timeout you saw with Git earlier). minikube itself was fine.
+
+### What we did
+Dashboard is installed via GitHub API instead. A local copy is at `k8s/dashboard/recommended.yaml` for next time.
+
+### Finish login (your terminal)
+
+```bash
+# 1. Get a fresh token
+kubectl -n kubernetes-dashboard create token admin-user
+
+# 2. In another terminal — keep this running
+kubectl proxy
+```
+
+Open:
+
+http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/
+
+- Choose **Token**
+- Paste the token
+- Sign in
+
+### Next time (no GitHub raw URL)
+
+```bash
+kubectl apply -f k8s/dashboard/recommended.yaml
+```
