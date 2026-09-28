@@ -95,7 +95,9 @@ receivers:
         smarthost: "smtp.example.com:587"
         auth_username: "alertmanager@example.com"
         auth_password: "REPLACE_WITH_SMTP_PASSWORD"
-        subject: "🚨 CRITICAL ALERT: {{ .GroupLabels.alertname }}"
+        # Alertmanager has no top-level "subject" field — put it in headers.
+        headers:
+          Subject: "CRITICAL ALERT: {{ .GroupLabels.alertname }}"
         html: |
           <h2>Critical Alert: {{ .GroupLabels.alertname }}</h2>
           {{ range .Alerts }}

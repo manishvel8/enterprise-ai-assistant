@@ -2131,3 +2131,22 @@ Updated the **🏛️ Architecture** tab with a corrected K8s diagram plus the l
 | Frontend always `:80` | K8s `:80`; local `npm start` **`:4200`**. Postgres host map **`:5433`**, in-cluster **`:5432`** |
 
 Refresh the HTML → **Architecture** tab to see both diagrams and the correction table.
+The monitoring stack is up. Docker Hub was dropping the TLS handshake mid-pull, so nothing started on the first `make monitoring`. Pulling each image separately succeeded, and the containers are running now.
+
+Open these:
+
+- Prometheus: http://localhost:9090
+- Grafana: http://localhost:3001 (login `admin` / `admin`)
+- Alertmanager: http://localhost:9093
+
+Two extra fixes so the next start works with your current `docker-compose.dev.yml` stack:
+
+- The compose file now joins `enterprise-ai-assistant_ai-network-dev` and talks to `dev-redis` and `dev-postgres` (Postgres inside Docker is port **5432**, not the host port 5433).
+- Alertmanager was crash-looping because `subject:` is not a valid field. It is now under `headers`.
+
+Images are cached locally, so a later `make monitoring` should start without pulling again. If a pull times out in the future, retry one image at a time:
+
+```bash
+docker pull grafana/grafana:10.2.0
+docker-compose -f monitoring/docker-compose.monitoring.yml up -d
+```

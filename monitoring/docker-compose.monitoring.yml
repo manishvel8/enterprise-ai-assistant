@@ -28,15 +28,18 @@
 #   9121 Redis exporter
 #   9187 Postgres exporter
 
-version: '3.9'
-
 networks:
   monitoring:
     driver: bridge
-  # Connect to the main app network so exporters can reach app containers
+  # Exporters join the same Docker network as Postgres/Redis.
+  # docker-compose.dev.yml creates: enterprise-ai-assistant_ai-network-dev
+  # full docker-compose.yml creates: enterprise-ai-assistant_ai-network
+  # Override if needed:
+  #   MONITORING_APP_NETWORK=enterprise-ai-assistant_ai-network \
+  #     docker-compose -f monitoring/docker-compose.monitoring.yml up -d
   ai-network:
     external: true
-    name: enterprise-ai-assistant_ai-network
+    name: ${MONITORING_APP_NETWORK:-enterprise-ai-assistant_ai-network-dev}
 
 volumes:
   prometheus_data:
@@ -141,7 +144,8 @@ services:
     container_name: monitoring-redis-exporter
     restart: unless-stopped
     environment:
-      REDIS_ADDR: "redis://ai-redis:6379"  # ai-redis = container name in ai-network
+      # dev stack container is dev-redis. Full compose uses ai-redis.
+      REDIS_ADDR: "${REDIS_ADDR:-redis://dev-redis:6379}"
     ports:
       - "9121:9121"
     networks:
@@ -155,7 +159,9 @@ services:
     container_name: monitoring-postgres-exporter
     restart: unless-stopped
     environment:
-      DATA_SOURCE_NAME: "postgresql://ai_user:dev_password@ai-postgres:5433/ai_assistant?sslmode=disable"
+      # Inside Docker, Postgres listens on 5432 (host port 5433 is only the laptop mapping).
+      # dev stack container is dev-postgres. Full compose uses ai-postgres.
+      DATA_SOURCE_NAME: "${DATA_SOURCE_NAME:-postgresql://ai_user:dev_password@dev-postgres:5432/ai_assistant?sslmode=disable}"
     ports:
       - "9187:9187"
     networks:
